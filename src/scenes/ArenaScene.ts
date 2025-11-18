@@ -26,6 +26,9 @@ export class ArenaScene extends Phaser.Scene {
   private overlay?: Overlay;
   private players: Player[] = [];
   private energy?: Phaser.Physics.Arcade.Group;
+  private rareEnergy?: Phaser.Physics.Arcade.Group;
+  private hazards?: Phaser.Physics.Arcade.Group;
+  private obstacles?: Phaser.Physics.Arcade.StaticGroup;
   private lastDash: Record<string, number> = {};
   private dashState: Record<string, { direction: Phaser.Math.Vector2; until: number } | undefined> = {};
 
@@ -65,9 +68,26 @@ export class ArenaScene extends Phaser.Scene {
       dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER)
     }));
 
+    this.obstacles = this.physics.add.staticGroup();
+    this.createObstacles();
+
     this.energy = this.physics.add.group();
+    this.rareEnergy = this.physics.add.group();
+    this.hazards = this.physics.add.group();
+
     this.spawnEnergyOrbs();
-    this.physics.add.overlap(this.players.map((p) => p.shape), this.energy, (_playerShape, energy) => {
+    this.spawnRareEnergy();
+    this.spawnHazards();
+
+    const playerShapes = this.players.map((p) => p.shape);
+    if (this.obstacles) {
+      this.physics.add.collider(playerShapes, this.obstacles);
+      if (this.hazards) {
+        this.physics.add.collider(this.hazards, this.obstacles);
+      }
+    }
+
+    this.physics.add.overlap(playerShapes, this.energy, (_playerShape, energy) => {
       const player = this.players.find((p) => p.shape === _playerShape);
       const orb = energy as Phaser.GameObjects.Arc;
       if (!player || !orb.active) {
@@ -82,11 +102,30 @@ export class ArenaScene extends Phaser.Scene {
         this.spawnEnergyOrbs(1);
       }
     });
+
+    this.physics.add.overlap(playerShapes, this.rareEnergy, (_playerShape, energy) => {
+      const player = this.players.find((p) => p.shape === _playerShape);
+      const orb = energy as Phaser.GameObjects.Arc;
+      if (!player || !orb.active) return;
+      orb.destroy();
+      player.score += 3;
+      this.spawnRareEnergy(1);
+    });
+
+    this.physics.add.overlap(playerShapes, this.hazards, (_playerShape, hazard) => {
+      const player = this.players.find((p) => p.shape === _playerShape);
+      const orb = hazard as Phaser.GameObjects.Arc;
+      if (!player || !orb.active) return;
+      orb.destroy();
+      player.score = Math.max(0, player.score - 2);
+      this.applyHazardPenalty(player);
+      this.spawnHazards(1);
+    });
   }
 
   update(): void {
     this.players.forEach((player) => this.updatePlayerMovement(player));
-    this.overlay?.update(this.players.map(this.toScoreState));
+    this.overlay?.update(this.players.map((player) => this.toScoreState(player)));
   }
 
   private updatePlayerMovement(player: Player): void {
@@ -181,6 +220,33 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  private spawnRareEnergy(count = 1): void {
+    if (!this.rareEnergy) return;
+    for (let i = 0; i < count; i += 1) {
+      const x = Phaser.Math.Between(60, this.scale.width - 60);
+      const y = Phaser.Math.Between(60, this.scale.height - 60);
+      const orb = this.add.star(x, y, 5, 8, 14, 0xffd803, 0.9);
+      this.physics.add.existing(orb);
+      this.rareEnergy.add(orb);
+    }
+  }
+
+  private spawnHazards(count = 2): void {
+    if (!this.hazards) return;
+    for (let i = 0; i < count; i += 1) {
+      const x = Phaser.Math.Between(40, this.scale.width - 40);
+      const y = Phaser.Math.Between(40, this.scale.height - 40);
+      const orb = this.add.circle(x, y, 12, 0xff5470, 0.9);
+      this.physics.add.existing(orb);
+      const body = orb.body as Phaser.Physics.Arcade.Body;
+      body.setCircle(12);
+      body.setVelocity(Phaser.Math.Between(-40, 40), Phaser.Math.Between(-40, 40));
+      body.setBounce(1, 1);
+      body.setCollideWorldBounds(true);
+      this.hazards.add(orb);
+    }
+  }
+
   private addDashBurst(x: number, y: number, color: number): void {
     const particles = this.add.particles(x, y, undefined, {
       speed: { min: -100, max: 100 },
@@ -194,12 +260,46 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private toScoreState(player: Player): ScoreState {
+    const lastDash = this.lastDash[player.id] ?? -Infinity;
+    const elapsed = this.time.now - lastDash;
+    const remaining = Math.max(0, DASH_COOLDOWN - elapsed);
+    const dashReady = remaining <= 0;
+    const dashPercent = dashReady ? 1 : 1 - remaining / DASH_COOLDOWN;
+
     return {
       id: player.id,
       label: player.label,
       value: player.score,
-      color: `#${player.color.toString(16).padStart(6, '0')}`
+      color: `#${player.color.toString(16).padStart(6, '0')}`,
+      dashReady,
+      dashPercent
     };
+  }
+
+  private createObstacles(): void {
+    if (!this.obstacles) return;
+    const configs = [
+      { x: 400, y: 200, width: 160, height: 24 },
+      { x: 400, y: 400, width: 160, height: 24 },
+      { x: 200, y: 300, width: 24, height: 140 },
+      { x: 600, y: 300, width: 24, height: 140 }
+    ];
+    configs.forEach((config) => {
+      const block = this.add.rectangle(config.x, config.y, config.width, config.height, 0x0f0e17, 0.8);
+      this.physics.add.existing(block, true);
+      this.obstacles?.add(block);
+    });
+  }
+
+  private applyHazardPenalty(player: Player): void {
+    this.cameras.main.shake(120, 0.004);
+    this.tweens.add({
+      targets: player.shape,
+      alpha: { from: 1, to: 0.5 },
+      yoyo: true,
+      repeat: 3,
+      duration: 80
+    });
   }
 
   shutdown(): void {

@@ -3,6 +3,8 @@ export type ScoreState = {
   label: string;
   value: number;
   color: string;
+  dashReady: boolean;
+  dashPercent: number;
 };
 
 export class Overlay {
@@ -11,6 +13,10 @@ export class Overlay {
   private instructionToggle: HTMLButtonElement;
 
   constructor() {
+    document.querySelectorAll('.scoreboard, .instruction-panel, .instruction-toggle').forEach((element) =>
+      element.remove()
+    );
+
     this.scoreboard = document.createElement('div');
     this.scoreboard.className = 'scoreboard';
     document.body.appendChild(this.scoreboard);
@@ -22,8 +28,9 @@ export class Overlay {
       <ul>
         <li><strong>Player 1:</strong> WASD to move, Shift to Dash</li>
         <li><strong>Player 2:</strong> Arrow Keys to move, Enter to Dash</li>
-        <li>Collect energy orbs. First to reach 10 wins.</li>
-        <li>Use Dash to burst through tight spaces.</li>
+        <li>Collect green energy orbs (+1) and the rare yellow cores (+3).</li>
+        <li>Avoid the hazardous red pulses (-2) and navigate around solid walls.</li>
+        <li>Dash gauge shows cooldown. First to reach 10 points wins.</li>
       </ul>
     `;
     document.body.appendChild(this.instructionPanel);
@@ -38,9 +45,34 @@ export class Overlay {
   }
 
   update(scores: ScoreState[]): void {
-    this.scoreboard.innerHTML = scores
-      .map((score) => `<span style="color:${score.color}">${score.label}: ${score.value}</span>`)
-      .join('<br />');
+    this.scoreboard.innerHTML = '';
+    scores.forEach((score) => {
+      const row = document.createElement('div');
+      row.className = 'scoreboard__row';
+
+      const label = document.createElement('span');
+      label.className = 'scoreboard__label';
+      label.style.color = score.color;
+      label.textContent = score.label;
+      row.appendChild(label);
+
+      const value = document.createElement('span');
+      value.className = 'scoreboard__value';
+      value.textContent = String(score.value);
+      row.appendChild(value);
+
+      const dashGauge = document.createElement('div');
+      dashGauge.className = 'scoreboard__dash';
+      dashGauge.setAttribute('data-ready', String(score.dashReady));
+      const dashFill = document.createElement('div');
+      dashFill.className = 'scoreboard__dash-fill';
+      dashFill.style.width = `${Math.round(score.dashPercent * 100)}%`;
+      dashFill.style.background = score.dashReady ? '#2cb67d' : score.color;
+      dashGauge.appendChild(dashFill);
+      row.appendChild(dashGauge);
+
+      this.scoreboard.appendChild(row);
+    });
   }
 
   private toggleInstructions(): void {

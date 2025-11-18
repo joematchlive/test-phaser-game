@@ -31,6 +31,51 @@ canvas {
   border-radius: 8px;
   font-size: 14px;
   line-height: 1.5;
+  min-width: 180px;
+}
+
+.scoreboard__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.scoreboard__row:last-child {
+  margin-bottom: 0;
+}
+
+.scoreboard__label {
+  font-weight: 600;
+}
+
+.scoreboard__value {
+  font-variant-numeric: tabular-nums;
+}
+
+.scoreboard__dash {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+  position: relative;
+}
+
+.scoreboard__dash::after {
+  content: attr(data-ready);
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.scoreboard__dash-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2cb67d, #7f5af0);
+  transition: width 0.15s ease;
 }
 
 .instruction-toggle {
