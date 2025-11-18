@@ -13,10 +13,14 @@ export type ScoreState = {
   dashPercent: number;
   goal: number;
   effects: EffectState[];
+  wins: number;
+  hookCharges: number;
+  maxHookCharges: number;
 };
 
 type OverlayOptions = {
   targetScore: number;
+  negativeLossThreshold?: number;
 };
 
 export class Overlay {
@@ -36,6 +40,11 @@ export class Overlay {
     this.instructionPanel = document.createElement('div');
     this.instructionPanel.className = 'instruction-panel';
     const targetScore = options?.targetScore ?? 10;
+    const debtLine =
+      options?.negativeLossThreshold !== undefined
+        ? `<li>Debt matters: hitting ${options.negativeLossThreshold} puts you out immediately. Adjust the floor in Settings.</li>`
+        : '';
+
     this.instructionPanel.innerHTML = `
       <h3>Arena Briefing</h3>
       <p>Race to ${targetScore} energy by scooping power cores, grappling rivals, and dodging hazards.</p>
@@ -45,6 +54,8 @@ export class Overlay {
         <li>Dash bars under each score show cooldown progress—wait for a full bar to burst again.</li>
         <li>Green orbs are +1, radiant gold cores are +3. Red pulses subtract 2 and shake your craft.</li>
         <li>Cyan boosters, magenta dampeners, pale prisms, and ember disruptors now appear. Use them for surges, to slow rivals, cloak yourself, or hex the other pilot.</li>
+        <li>Rope spools are scarce but restock a grapple charge (you only hold three). Spend hooks wisely.</li>
+        ${debtLine}
         <li>Neon rings (or the lack of one when cloaked) plus mini bars on the HUD show how long each modifier lasts.</li>
         <li>Moving gates and optional Minefield mode add constant motion to obstacles—watch your positioning.</li>
         <li>Press ESC at any time to head back to the menu and adjust arenas, hazards, score limits, or the active mode.</li>
@@ -77,6 +88,16 @@ export class Overlay {
       value.className = 'scoreboard__value';
       value.textContent = `${score.value}/${score.goal}`;
       row.appendChild(value);
+
+      const meta = document.createElement('div');
+      meta.className = 'scoreboard__meta';
+      const wins = document.createElement('span');
+      wins.innerHTML = `Wins <strong>${score.wins}</strong>`;
+      meta.appendChild(wins);
+      const hooks = document.createElement('span');
+      hooks.innerHTML = `Hooks <strong>${score.hookCharges}/${score.maxHookCharges}</strong>`;
+      meta.appendChild(hooks);
+      row.appendChild(meta);
 
       const dashGauge = document.createElement('div');
       dashGauge.className = 'scoreboard__dash';

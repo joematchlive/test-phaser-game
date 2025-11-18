@@ -32,6 +32,16 @@ export class SettingsScene extends Phaser.Scene {
         getValue: () => `${getActiveSettings().winningScore} pts`
       },
       {
+        label: 'Debt limit',
+        adjust: (delta) => {
+          const current = getActiveSettings().negativeLossThreshold;
+          const next = Phaser.Math.Clamp(current + delta, -10, -1);
+          updateSettings({ negativeLossThreshold: next });
+        },
+        getValue: () => `${getActiveSettings().negativeLossThreshold} pts`,
+        description: () => 'Drop to this negative score and your craft forfeits the round.'
+      },
+      {
         label: 'Energy orbs',
         adjust: (delta) => clampSetting('energyCount', delta, 3, 10),
         getValue: () => `${getActiveSettings().energyCount} on spawn`
