@@ -8,6 +8,7 @@ type Player = {
   color: number;
   shape: Phaser.GameObjects.Rectangle;
   body: Phaser.Physics.Arcade.Body;
+  facing: Phaser.Math.Vector2;
   score: number;
   wins: number;
   dashKey: Phaser.Input.Keyboard.Key;
@@ -124,12 +125,14 @@ export class ArenaScene extends Phaser.Scene {
     this.activeHooks = {};
     this.roundOver = false;
     // Reset group references so we don't access destroyed children during restart
-    this.energy?.clear(true, true);
-    this.rareEnergy?.clear(true, true);
-    this.hazards?.clear(true, true);
-    this.behaviorPickups?.clear(true, true);
-    this.ropePickups?.clear(true, true);
-    this.powerPickups?.clear(true, true);
+    this.destroyGroup(this.energy);
+    this.destroyGroup(this.rareEnergy);
+    this.destroyGroup(this.hazards);
+    this.destroyGroup(this.behaviorPickups);
+    this.destroyGroup(this.ropePickups);
+    this.destroyGroup(this.powerPickups);
+    this.destroyGroup(this.obstacles);
+    this.destroyGroup(this.movingObstacles);
     this.energy = undefined;
     this.rareEnergy = undefined;
     this.hazards = undefined;
@@ -391,12 +394,15 @@ export class ArenaScene extends Phaser.Scene {
     if (left.isDown) velocity.x -= 1;
     if (right.isDown) velocity.x += 1;
 
-    velocity.normalize();
+    const hasInput = velocity.lengthSq() > 0;
+    if (hasInput) {
+      velocity.normalize();
+      player.facing.set(velocity.x, velocity.y);
+    }
     const totalSpeedMultiplier = player.speedMultiplier * player.surfaceMultiplier;
     body.setVelocity(velocity.x * PLAYER_SPEED * totalSpeedMultiplier, velocity.y * PLAYER_SPEED * totalSpeedMultiplier);
 
     const dashReady = this.time.now - (this.lastDash[player.id] ?? 0) >= DASH_COOLDOWN;
-    const hasInput = velocity.lengthSq() > 0;
     if (dashReady && hasInput && Phaser.Input.Keyboard.JustDown(player.dashKey)) {
       const direction = velocity.clone();
       this.dashState[player.id] = { direction, until: this.time.now + DASH_DURATION };
@@ -443,6 +449,7 @@ export class ArenaScene extends Phaser.Scene {
     this.physics.add.existing(shape);
     const body = shape.body as Phaser.Physics.Arcade.Body;
     body.setCollideWorldBounds(true);
+    body.pushable = false;
 
     return {
       id: config.id,
@@ -450,6 +457,7 @@ export class ArenaScene extends Phaser.Scene {
       color: config.color,
       shape,
       body,
+      facing: new Phaser.Math.Vector2(0, 1),
       score: 0,
       wins: config.wins,
       controls: config.keys,
@@ -1059,18 +1067,38 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private deployGlueField(player: Player): void {
+    const direction = player.facing.lengthSq() > 0 ? player.facing.clone() : new Phaser.Math.Vector2(0, 1);
+    const offset = GLUE_SIZE * 0.5 + Math.max(player.body.halfWidth, player.body.halfHeight);
+    const dropPosition = new Phaser.Math.Vector2(player.shape.x, player.shape.y).subtract(direction.scale(offset));
+    const halfSize = GLUE_SIZE / 2;
+    dropPosition.x = Phaser.Math.Clamp(dropPosition.x, halfSize, this.scale.width - halfSize);
+    dropPosition.y = Phaser.Math.Clamp(dropPosition.y, halfSize, this.scale.height - halfSize);
     const id = `glue-${this.time.now}-${Phaser.Math.Between(0, 999)}`;
     const zone: SurfaceSchema = {
       id,
       label: 'Glue Slick',
-      x: player.shape.x,
-      y: player.shape.y,
+      x: dropPosition.x,
+      y: dropPosition.y,
       width: GLUE_SIZE,
       height: GLUE_SIZE,
       multiplier: GLUE_MULTIPLIER,
       color: 0xffa6c9
     };
     this.addSurfaceZone(zone, GLUE_DURATION);
-    this.addStatusPing(player.shape.x, player.shape.y, 0xffa6c9);
+    this.addStatusPing(dropPosition.x, dropPosition.y, 0xffa6c9);
+  }
+
+  private destroyGroup(
+    group?: Phaser.GameObjects.Group | Phaser.Physics.Arcade.Group | Phaser.Physics.Arcade.StaticGroup
+  ): void {
+    if (!group) {
+      return;
+    }
+    const hasChildren = Boolean((group as Phaser.GameObjects.Group).children);
+    if (!hasChildren) {
+      return;
+    }
+    group.clear(true, true);
+    group.destroy(true);
   }
 }
