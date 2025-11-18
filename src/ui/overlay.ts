@@ -1,3 +1,9 @@
+export type EffectState = {
+  label: string;
+  percent: number;
+  color: string;
+};
+
 export type ScoreState = {
   id: string;
   label: string;
@@ -5,6 +11,12 @@ export type ScoreState = {
   color: string;
   dashReady: boolean;
   dashPercent: number;
+  goal: number;
+  effects: EffectState[];
+};
+
+type OverlayOptions = {
+  targetScore: number;
 };
 
 export class Overlay {
@@ -12,7 +24,7 @@ export class Overlay {
   private instructionPanel: HTMLDivElement;
   private instructionToggle: HTMLButtonElement;
 
-  constructor() {
+  constructor(options?: OverlayOptions) {
     document.querySelectorAll('.scoreboard, .instruction-panel, .instruction-toggle').forEach((element) =>
       element.remove()
     );
@@ -23,14 +35,17 @@ export class Overlay {
 
     this.instructionPanel = document.createElement('div');
     this.instructionPanel.className = 'instruction-panel';
+    const targetScore = options?.targetScore ?? 10;
     this.instructionPanel.innerHTML = `
-      <h3>How to play</h3>
+      <h3>Arena Briefing</h3>
+      <p>Race to ${targetScore} energy by scooping power cores, grappling rivals, and dodging hazards.</p>
       <ul>
-        <li><strong>Player 1:</strong> WASD to move, Shift to Dash</li>
-        <li><strong>Player 2:</strong> Arrow Keys to move, Enter to Dash</li>
-        <li>Collect green energy orbs (+1) and the rare yellow cores (+3).</li>
-        <li>Avoid the hazardous red pulses (-2) and navigate around solid walls.</li>
-        <li>Dash gauge shows cooldown. First to reach 10 points wins.</li>
+        <li><strong>Pilot One:</strong> WASD to move, Shift to Dash, E to Grapple.</li>
+        <li><strong>Pilot Two:</strong> Arrow Keys to move, Enter to Dash, P to Grapple.</li>
+        <li>Dash bars under each score show cooldown progress—wait for a full bar to burst again.</li>
+        <li>Green orbs are +1, radiant gold cores are +3. Red pulses subtract 2 and shake your craft.</li>
+        <li>Cyan boosters and magenta dampeners alter your speed. Neon rings around the players and mini bars on the HUD show how long the effect lasts.</li>
+        <li>Press ESC at any time to head back to the menu and adjust arenas, hazards, or score limits.</li>
       </ul>
     `;
     document.body.appendChild(this.instructionPanel);
@@ -58,7 +73,7 @@ export class Overlay {
 
       const value = document.createElement('span');
       value.className = 'scoreboard__value';
-      value.textContent = String(score.value);
+      value.textContent = `${score.value}/${score.goal}`;
       row.appendChild(value);
 
       const dashGauge = document.createElement('div');
@@ -70,6 +85,33 @@ export class Overlay {
       dashFill.style.background = score.dashReady ? '#2cb67d' : score.color;
       dashGauge.appendChild(dashFill);
       row.appendChild(dashGauge);
+
+      if (score.effects.length > 0) {
+        const effectWrap = document.createElement('div');
+        effectWrap.className = 'scoreboard__effects';
+        score.effects.forEach((effect) => {
+          const effectItem = document.createElement('div');
+          effectItem.className = 'scoreboard__effect';
+          effectItem.style.setProperty('--effect-color', effect.color);
+
+          const effectLabel = document.createElement('span');
+          effectLabel.className = 'scoreboard__effect-label';
+          effectLabel.textContent = effect.label;
+          effectItem.appendChild(effectLabel);
+
+          const meter = document.createElement('div');
+          meter.className = 'scoreboard__effect-meter';
+          const fill = document.createElement('div');
+          fill.className = 'scoreboard__effect-meter-fill';
+          fill.style.width = `${Math.round(effect.percent * 100)}%`;
+          fill.style.backgroundColor = effect.color;
+          meter.appendChild(fill);
+          effectItem.appendChild(meter);
+
+          effectWrap.appendChild(effectItem);
+        });
+        row.appendChild(effectWrap);
+      }
 
       this.scoreboard.appendChild(row);
     });
