@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { ArenaScene } from './scenes/ArenaScene';
+import { MenuScene } from './scenes/MenuScene';
+import { SettingsScene } from './scenes/SettingsScene';
 import './styles.css';
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -19,7 +21,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false
     }
   },
-  scene: [ArenaScene]
+  scene: [MenuScene, SettingsScene, ArenaScene]
 };
 
 // eslint-disable-next-line no-new

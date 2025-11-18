@@ -1,0 +1,47 @@
+[
+  {
+    "id": "crossroads",
+    "name": "Crossroads",
+    "description": "Four orthogonal plates split the arena into fast lanes and safe pockets.",
+    "spawnPoints": [
+      { "x": 160, "y": 160 },
+      { "x": 640, "y": 440 }
+    ],
+    "solids": [
+      { "x": 400, "y": 150, "width": 280, "height": 24 },
+      { "x": 400, "y": 450, "width": 280, "height": 24 },
+      { "x": 200, "y": 300, "width": 24, "height": 200 },
+      { "x": 600, "y": 300, "width": 24, "height": 200 }
+    ]
+  },
+  {
+    "id": "runway",
+    "name": "Runway",
+    "description": "Long safety rails in the center encourage hook shots along the edges.",
+    "spawnPoints": [
+      { "x": 140, "y": 300 },
+      { "x": 660, "y": 300 }
+    ],
+    "solids": [
+      { "x": 400, "y": 200, "width": 320, "height": 20 },
+      { "x": 400, "y": 400, "width": 320, "height": 20 },
+      { "x": 400, "y": 300, "width": 120, "height": 120 }
+    ]
+  },
+  {
+    "id": "pinball",
+    "name": "Pinball Garden",
+    "description": "Diamond-shaped pillars keep everyone moving and make collectibles trickier to scoop.",
+    "spawnPoints": [
+      { "x": 180, "y": 420 },
+      { "x": 620, "y": 180 }
+    ],
+    "solids": [
+      { "x": 250, "y": 200, "width": 40, "height": 140 },
+      { "x": 550, "y": 400, "width": 40, "height": 140 },
+      { "x": 400, "y": 150, "width": 140, "height": 40 },
+      { "x": 400, "y": 450, "width": 140, "height": 40 },
+      { "x": 400, "y": 300, "width": 60, "height": 60 }
+    ]
+  }
+]

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { GameSettings, getActiveSettings, getLevelById, LevelSchema } from '../state/settings';
 import { Overlay, ScoreState } from '../ui/overlay';
 
 type Player = {
@@ -18,6 +19,15 @@ type Player = {
   };
   speedMultiplier: number;
   speedResetTimer?: Phaser.Time.TimerEvent;
+  activeEffect?: PlayerEffect;
+};
+
+type PlayerEffect = {
+  type: 'boost' | 'slow';
+  aura: Phaser.GameObjects.Arc;
+  expires: number;
+  duration: number;
+  color: number;
 };
 
 const PLAYER_SPEED = 220;
@@ -45,12 +55,18 @@ export class ArenaScene extends Phaser.Scene {
     string,
     { target: Player; tether: Phaser.GameObjects.Line; expires: number } | undefined
   > = {};
+  private settings!: GameSettings;
+  private level!: LevelSchema;
+  private escapeKey?: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super('Arena');
   }
 
   create(): void {
+    this.settings = getActiveSettings();
+    this.level = getLevelById(this.settings.levelId);
+
     // Ensure the scene restarts from a clean state by clearing player and dash tracking
     this.players = [];
     this.lastDash = {};
@@ -59,37 +75,59 @@ export class ArenaScene extends Phaser.Scene {
     this.activeHooks = {};
 
     this.createBackground();
-    this.overlay = new Overlay();
+    this.overlay = new Overlay({ targetScore: this.settings.winningScore });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.overlay?.destroy();
       this.overlay = undefined;
+      this.escapeKey?.destroy();
+      this.escapeKey = undefined;
     });
     this.events.once(Phaser.Scenes.Events.DESTROY, () => {
       this.overlay?.destroy();
       this.overlay = undefined;
+      this.escapeKey?.destroy();
+      this.escapeKey = undefined;
     });
 
-    this.players.push(this.createPlayer({
-      id: 'p1',
-      label: 'Player 1',
-      color: 0x7f5af0,
-      x: 200,
-      y: 300,
-      keys: this.createKeys(['W', 'S', 'A', 'D']),
-      dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
-      hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E)
-    }));
+    this.escapeKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+    this.escapeKey?.on('down', () => this.scene.start('Menu'));
 
-    this.players.push(this.createPlayer({
-      id: 'p2',
-      label: 'Player 2',
-      color: 0xff8906,
-      x: 600,
-      y: 300,
-      keys: this.createKeys(['UP', 'DOWN', 'LEFT', 'RIGHT']),
-      dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER),
-      hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P)
-    }));
+    const spawnPoints = this.level.spawnPoints.length
+      ? this.level.spawnPoints
+      : [
+          { x: this.scale.width * 0.25, y: this.scale.height * 0.3 },
+          { x: this.scale.width * 0.75, y: this.scale.height * 0.7 }
+        ];
+
+    const playerConfigs = [
+      {
+        id: 'p1',
+        label: 'Pilot One',
+        color: 0x7f5af0,
+        keys: this.createKeys(['W', 'S', 'A', 'D']),
+        dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
+        hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E)
+      },
+      {
+        id: 'p2',
+        label: 'Pilot Two',
+        color: 0xff8906,
+        keys: this.createKeys(['UP', 'DOWN', 'LEFT', 'RIGHT']),
+        dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER),
+        hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P)
+      }
+    ];
+
+    playerConfigs.forEach((config, index) => {
+      const spawn = spawnPoints[index % spawnPoints.length] ?? { x: 400, y: 300 };
+      this.players.push(
+        this.createPlayer({
+          ...config,
+          x: spawn.x,
+          y: spawn.y
+        })
+      );
+    });
 
     this.obstacles = this.physics.add.staticGroup();
     this.createObstacles();
@@ -99,10 +137,10 @@ export class ArenaScene extends Phaser.Scene {
     this.hazards = this.physics.add.group();
     this.behaviorPickups = this.physics.add.group();
 
-    this.spawnEnergyOrbs();
-    this.spawnRareEnergy();
-    this.spawnHazards();
-    this.spawnBehaviorPickups();
+    this.spawnEnergyOrbs(this.settings.energyCount);
+    this.spawnRareEnergy(this.settings.rareEnergyCount);
+    this.spawnHazards(this.settings.hazardCount);
+    this.spawnBehaviorPickups(this.settings.behaviorPickupCount);
 
     const playerShapes = this.players.map((p) => p.shape);
     if (this.obstacles) {
@@ -122,7 +160,7 @@ export class ArenaScene extends Phaser.Scene {
 
       orb.destroy();
       player.score += 1;
-      if (player.score >= 10) {
+      if (player.score >= this.settings.winningScore) {
         this.scene.restart();
       } else {
         this.spawnEnergyOrbs(1);
@@ -155,16 +193,19 @@ export class ArenaScene extends Phaser.Scene {
       const effect = item.getData('effect');
       item.destroy();
       if (effect === 'boost') {
-        this.applySpeedModifier(player, 1.5, 3500);
+        this.applySpeedModifier(player, 1.5, 3500, 'boost');
       } else if (effect === 'slow') {
-        this.applySpeedModifier(player, 0.6, 3500);
+        this.applySpeedModifier(player, 0.6, 3500, 'slow');
       }
       this.spawnBehaviorPickups(1);
     });
   }
 
   update(): void {
-    this.players.forEach((player) => this.updatePlayerMovement(player));
+    this.players.forEach((player) => {
+      this.updatePlayerMovement(player);
+      this.updateEffectAura(player);
+    });
     this.updateHooks();
     this.overlay?.update(this.players.map((player) => this.toScoreState(player)));
   }
@@ -257,9 +298,10 @@ export class ArenaScene extends Phaser.Scene {
     } as Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key>;
   }
 
-  private spawnEnergyOrbs(count = 5): void {
+  private spawnEnergyOrbs(count?: number): void {
     if (!this.energy) return;
-    for (let i = 0; i < count; i += 1) {
+    const amount = count ?? this.settings?.energyCount ?? 5;
+    for (let i = 0; i < amount; i += 1) {
       const position = this.findSpawnPosition(12);
       if (!position) continue;
       const orb = this.add.circle(position.x, position.y, 10, 0x2cb67d, 0.8);
@@ -268,9 +310,10 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
-  private spawnRareEnergy(count = 1): void {
+  private spawnRareEnergy(count?: number): void {
     if (!this.rareEnergy) return;
-    for (let i = 0; i < count; i += 1) {
+    const amount = count ?? this.settings?.rareEnergyCount ?? 1;
+    for (let i = 0; i < amount; i += 1) {
       const position = this.findSpawnPosition(16);
       if (!position) continue;
       const orb = this.add.star(position.x, position.y, 5, 8, 14, 0xffd803, 0.9);
@@ -279,9 +322,10 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
-  private spawnHazards(count = 2): void {
+  private spawnHazards(count?: number): void {
     if (!this.hazards) return;
-    for (let i = 0; i < count; i += 1) {
+    const amount = count ?? this.settings?.hazardCount ?? 2;
+    for (let i = 0; i < amount; i += 1) {
       const position = this.findSpawnPosition(16);
       if (!position) continue;
       const orb = this.add.circle(position.x, position.y, 12, 0xff5470, 0.9);
@@ -295,10 +339,11 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
-  private spawnBehaviorPickups(count = 2): void {
+  private spawnBehaviorPickups(count?: number): void {
     if (!this.behaviorPickups) return;
     const effects: Array<'boost' | 'slow'> = ['boost', 'slow'];
-    for (let i = 0; i < count; i += 1) {
+    const amount = count ?? this.settings?.behaviorPickupCount ?? 2;
+    for (let i = 0; i < amount; i += 1) {
       const position = this.findSpawnPosition(14);
       if (!position) continue;
       const effect = effects[(i + Phaser.Math.Between(0, effects.length - 1)) % effects.length];
@@ -322,13 +367,42 @@ export class ArenaScene extends Phaser.Scene {
     this.time.delayedCall(300, () => particles.destroy());
   }
 
-  private applySpeedModifier(player: Player, multiplier: number, duration: number): void {
+  private applySpeedModifier(player: Player, multiplier: number, duration: number, type: 'boost' | 'slow'): void {
     player.speedMultiplier = multiplier;
     player.speedResetTimer?.remove(false);
+    this.setPlayerEffect(player, type, duration);
     player.speedResetTimer = this.time.delayedCall(duration, () => {
       player.speedMultiplier = 1;
       player.speedResetTimer = undefined;
+      this.clearPlayerEffect(player);
     });
+  }
+
+  private setPlayerEffect(player: Player, type: 'boost' | 'slow', duration: number): void {
+    this.clearPlayerEffect(player);
+    const color = type === 'boost' ? 0x00f0ff : 0xff006e;
+    const aura = this.add.circle(player.shape.x, player.shape.y, 34, color, 0.06);
+    aura.setStrokeStyle(3, color, 0.9);
+    aura.setDepth(2);
+    player.activeEffect = { type, aura, expires: this.time.now + duration, duration, color };
+  }
+
+  private clearPlayerEffect(player: Player): void {
+    player.activeEffect?.aura.destroy();
+    player.activeEffect = undefined;
+  }
+
+  private updateEffectAura(player: Player): void {
+    if (!player.activeEffect) return;
+    const remaining = player.activeEffect.expires - this.time.now;
+    if (remaining <= 0) {
+      this.clearPlayerEffect(player);
+      return;
+    }
+    const percent = Phaser.Math.Clamp(remaining / player.activeEffect.duration, 0, 1);
+    player.activeEffect.aura.setPosition(player.shape.x, player.shape.y);
+    player.activeEffect.aura.setScale(0.9 + percent * 0.35);
+    player.activeEffect.aura.setAlpha(0.25 + percent * 0.6);
   }
 
   private attemptHook(player: Player): void {
@@ -343,17 +417,11 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     this.activeHooks[player.id]?.tether.destroy();
-    const tether = this.add.line(
-      0,
-      0,
-      player.shape.x,
-      player.shape.y,
-      target.shape.x,
-      target.shape.y,
-      player.color,
-      0.75
-    );
+    const tether = this.add.line(0, 0, 0, 0, 0, 0, player.color, 0.75);
+    tether.setOrigin(0, 0);
     tether.setLineWidth(2, 2);
+    tether.setDepth(1);
+    tether.setTo(player.shape.x, player.shape.y, target.shape.x, target.shape.y);
     this.activeHooks[player.id] = { target, tether, expires: this.time.now + HOOK_DURATION };
     this.hookTimers[player.id] = this.time.now;
   }
@@ -441,25 +509,36 @@ export class ArenaScene extends Phaser.Scene {
     const dashReady = remaining <= 0;
     const dashPercent = dashReady ? 1 : 1 - remaining / DASH_COOLDOWN;
 
+    const effects = player.activeEffect
+      ? [
+          {
+            label: player.activeEffect.type === 'boost' ? 'Speed Surge' : 'Flux Drag',
+            percent: Phaser.Math.Clamp(
+              (player.activeEffect.expires - this.time.now) / player.activeEffect.duration,
+              0,
+              1
+            ),
+            color: `#${player.activeEffect.color.toString(16).padStart(6, '0')}`
+          }
+        ]
+      : [];
+
     return {
       id: player.id,
       label: player.label,
       value: player.score,
       color: `#${player.color.toString(16).padStart(6, '0')}`,
       dashReady,
-      dashPercent
+      dashPercent,
+      goal: this.settings.winningScore,
+      effects
     };
   }
 
   private createObstacles(): void {
     if (!this.obstacles) return;
-    const configs = [
-      { x: 400, y: 200, width: 160, height: 24 },
-      { x: 400, y: 400, width: 160, height: 24 },
-      { x: 200, y: 300, width: 24, height: 140 },
-      { x: 600, y: 300, width: 24, height: 140 }
-    ];
-    configs.forEach((config) => {
+    const solids = this.level?.solids ?? [];
+    solids.forEach((config) => {
       const block = this.add.rectangle(config.x, config.y, config.width, config.height, 0x0f0e17, 0.8);
       this.physics.add.existing(block, true);
       this.obstacles?.add(block);

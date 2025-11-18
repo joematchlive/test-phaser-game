@@ -78,6 +78,44 @@ canvas {
   transition: width 0.15s ease;
 }
 
+.scoreboard__effects {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.scoreboard__effect {
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-left: 4px solid var(--effect-color, #2cb67d);
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.scoreboard__effect-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.scoreboard__effect-meter {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.scoreboard__effect-meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.15s ease;
+}
+
 .instruction-toggle {
   position: absolute;
   top: 16px;
