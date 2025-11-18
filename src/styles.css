@@ -68,6 +68,12 @@ canvas {
   color: #fffffe;
 }
 
+.scoreboard__surface {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
 .scoreboard__dash {
   grid-column: 1 / -1;
   width: 100%;
@@ -128,6 +134,34 @@ canvas {
   height: 100%;
   border-radius: inherit;
   transition: width 0.15s ease;
+}
+
+.scoreboard__power-button {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fffffe;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+
+.scoreboard__power-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.scoreboard__power-button:not(:disabled):hover,
+.scoreboard__power-button:not(:disabled):focus-visible {
+  background: rgba(44, 182, 125, 0.35);
+}
+
+.scoreboard__power-button:not(:disabled):active {
+  transform: scale(0.98);
 }
 
 .instruction-toggle {
