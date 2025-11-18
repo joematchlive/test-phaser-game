@@ -9,6 +9,12 @@ type StepperConfig = {
   description?: () => string;
 };
 
+type StepperSection = {
+  label: string;
+  description: string;
+  steppers: StepperConfig[];
+};
+
 export class SettingsScene extends Phaser.Scene {
   constructor() {
     super('Settings');
@@ -25,56 +31,121 @@ export class SettingsScene extends Phaser.Scene {
     });
     title.setOrigin(0.5);
 
-    const steppers: StepperConfig[] = [
+    const sections: StepperSection[] = [
       {
-        label: 'Target score',
-        adjust: (delta) => clampSetting('winningScore', delta, 5, 20),
-        getValue: () => `${getActiveSettings().winningScore} pts`
-      },
-      {
-        label: 'Debt limit',
-        adjust: (delta) => {
-          const current = getActiveSettings().negativeLossThreshold;
-          const next = Phaser.Math.Clamp(current + delta, -10, -1);
-          updateSettings({ negativeLossThreshold: next });
-        },
-        getValue: () => `${getActiveSettings().negativeLossThreshold} pts`,
-        description: () => 'Drop to this negative score and your craft forfeits the round.'
-      },
-      {
-        label: 'Energy orbs',
-        adjust: (delta) => clampSetting('energyCount', delta, 3, 10),
-        getValue: () => `${getActiveSettings().energyCount} on spawn`
-      },
-      {
-        label: 'Hazards',
-        adjust: (delta) => clampSetting('hazardCount', delta, 0, 5),
-        getValue: () => `${getActiveSettings().hazardCount} live`
-      },
-      {
-        label: 'Behavior pickups',
-        adjust: (delta) => clampSetting('behaviorPickupCount', delta, 0, 4),
-        getValue: () => `${getActiveSettings().behaviorPickupCount} modifiers`
-      },
-      {
-        label: 'Mode',
-        adjust: (delta) => this.cycleMode(delta > 0 ? 1 : -1),
-        getValue: () => getModeMetadata(getActiveSettings().mode).label,
-        description: () => getModeMetadata(getActiveSettings().mode).description
+        label: 'Match flow',
+        description: 'Tweak victory conditions and pacing for each round.',
+        steppers: [
+          {
+            label: 'Target score',
+            adjust: (delta) => clampSetting('winningScore', delta, 5, 20),
+            getValue: () => `${getActiveSettings().winningScore} pts`
+          },
+          {
+            label: 'Debt limit',
+            adjust: (delta) => {
+              const current = getActiveSettings().negativeLossThreshold;
+              const next = Phaser.Math.Clamp(current + delta, -10, -1);
+              updateSettings({ negativeLossThreshold: next });
+            },
+            getValue: () => `${getActiveSettings().negativeLossThreshold} pts`,
+            description: () => 'Drop to this negative score and your craft forfeits the round.'
+          },
+          {
+            label: 'Mode',
+            adjust: (delta) => this.cycleMode(delta > 0 ? 1 : -1),
+            getValue: () => getModeMetadata(getActiveSettings().mode).label,
+            description: () => getModeMetadata(getActiveSettings().mode).description
+          }
+        ]
       },
       {
         label: 'Arena layout',
-        adjust: (delta) => cycleLevel(delta > 0 ? 1 : -1),
-        getValue: () => getLevelById(getActiveSettings().levelId).name,
-        description: () => getLevelById(getActiveSettings().levelId).description
+        description: 'Control what spawns into the arena and how busy it feels.',
+        steppers: [
+          {
+            label: 'Energy orbs',
+            adjust: (delta) => clampSetting('energyCount', delta, 3, 10),
+            getValue: () => `${getActiveSettings().energyCount} on spawn`
+          },
+          {
+            label: 'Hazards',
+            adjust: (delta) => clampSetting('hazardCount', delta, 0, 5),
+            getValue: () => `${getActiveSettings().hazardCount} live`
+          },
+          {
+            label: 'Behavior pickups',
+            adjust: (delta) => clampSetting('behaviorPickupCount', delta, 0, 4),
+            getValue: () => `${getActiveSettings().behaviorPickupCount} modifiers`
+          },
+          {
+            label: 'Arena layout',
+            adjust: (delta) => cycleLevel(delta > 0 ? 1 : -1),
+            getValue: () => getLevelById(getActiveSettings().levelId).name,
+            description: () => getLevelById(getActiveSettings().levelId).description
+          }
+        ]
       }
     ];
 
-    let offsetY = 160;
-    steppers.forEach((stepper) => {
-      this.createStepper(stepper, offsetY);
-      offsetY += 90;
+    let activeSectionIndex = 0;
+    const sectionTitle = this.add.text(this.scale.width / 2, 130, sections[0].label, {
+      fontSize: '26px',
+      fontFamily: 'Space Mono, monospace',
+      color: '#f0f4f8'
     });
+    sectionTitle.setOrigin(0.5);
+
+    const sectionHint = this.add.text(this.scale.width / 2, 160, sections[0].description, {
+      fontSize: '16px',
+      fontFamily: 'Space Mono, monospace',
+      color: '#a7a9be',
+      align: 'center',
+      wordWrap: { width: 540 }
+    });
+    sectionHint.setOrigin(0.5);
+
+    const tabButtons = sections.map((section, index) =>
+      this.createTabButton(
+        this.scale.width / 2 + (index - (sections.length - 1) / 2) * 200,
+        200,
+        section.label,
+        () => {
+          if (activeSectionIndex === index) {
+            return;
+          }
+          activeSectionIndex = index;
+          sectionTitle.setText(section.label);
+          sectionHint.setText(section.description);
+          tabButtons.forEach((tab, tabIndex) =>
+            tab.setStyle(
+              tabIndex === activeSectionIndex
+                ? { backgroundColor: 'rgba(255,255,255,0.12)', color: '#fffffe' }
+                : { backgroundColor: 'rgba(255,255,255,0.04)', color: '#a7a9be' }
+            )
+          );
+          renderSection();
+        }
+      )
+    );
+
+    tabButtons[0].setStyle({ backgroundColor: 'rgba(255,255,255,0.12)', color: '#fffffe' });
+
+    let activeStepObjects: Phaser.GameObjects.GameObject[] = [];
+
+    const renderSection = () => {
+      activeStepObjects.forEach((obj) => obj.destroy());
+      activeStepObjects = [];
+      const section = sections[activeSectionIndex];
+      let offsetY = 260;
+      section.steppers.forEach((stepper, index) => {
+        const y = offsetY + index * 110;
+        const created = this.createStepper(stepper, y);
+        activeStepObjects.push(...created);
+      });
+    };
+
+    renderSection();
 
     this.createButton(this.scale.width / 2, this.scale.height - 80, 'Back to menu', () => {
       this.scene.start('Menu');
@@ -83,13 +154,15 @@ export class SettingsScene extends Phaser.Scene {
     this.input.keyboard?.once('keydown-ESC', () => this.scene.start('Menu'));
   }
 
-  private createStepper(config: StepperConfig, y: number): void {
+  private createStepper(config: StepperConfig, y: number): Phaser.GameObjects.GameObject[] {
+    const created: Phaser.GameObjects.GameObject[] = [];
     const label = this.add.text(this.scale.width / 2, y, config.label, {
       fontSize: '20px',
       fontFamily: 'Space Mono, monospace',
       color: '#fffffe'
     });
     label.setOrigin(0.5);
+    created.push(label);
 
     const valueText = this.add.text(this.scale.width / 2, y + 28, config.getValue(), {
       fontSize: '22px',
@@ -97,6 +170,7 @@ export class SettingsScene extends Phaser.Scene {
       color: '#2cb67d'
     });
     valueText.setOrigin(0.5);
+    created.push(valueText);
 
     const left = this.addStepperButton(this.scale.width / 2 - 120, y + 28, '<', () => {
       config.adjust(-1);
@@ -120,9 +194,36 @@ export class SettingsScene extends Phaser.Scene {
         wordWrap: { width: 520 }
       });
       description.setOrigin(0.5);
+      created.push(description);
     }
 
     [left, right].forEach((button) => button.setData('valueText', valueText));
+    created.push(left, right);
+    return created;
+  }
+
+  private createTabButton(x: number, y: number, label: string, handler: () => void): Phaser.GameObjects.Text {
+    const tab = this.add.text(x, y, label, {
+      fontSize: '18px',
+      fontFamily: 'Space Mono, monospace',
+      color: '#a7a9be',
+      backgroundColor: 'rgba(255,255,255,0.04)',
+      padding: { left: 28, right: 28, top: 10, bottom: 10 }
+    });
+    tab.setOrigin(0.5);
+    tab.setInteractive({ useHandCursor: true });
+    tab.on('pointerover', () => {
+      if (tab.style.color !== '#fffffe') {
+        tab.setStyle({ color: '#fffffe' });
+      }
+    });
+    tab.on('pointerout', () => {
+      if (tab.style.backgroundColor !== 'rgba(255,255,255,0.12)') {
+        tab.setStyle({ color: '#a7a9be' });
+      }
+    });
+    tab.on('pointerup', handler);
+    return tab;
   }
 
   private addStepperButton(x: number, y: number, label: string, handler: () => void): Phaser.GameObjects.Text {
