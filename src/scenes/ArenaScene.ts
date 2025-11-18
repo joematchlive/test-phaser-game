@@ -37,6 +37,11 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Ensure the scene restarts from a clean state by clearing player and dash tracking
+    this.players = [];
+    this.lastDash = {};
+    this.dashState = {};
+
     this.createBackground();
     this.overlay = new Overlay();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
