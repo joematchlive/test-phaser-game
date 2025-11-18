@@ -8,6 +8,8 @@ export type LevelSchema = {
   solids: Array<{ x: number; y: number; width: number; height: number }>;
 };
 
+export type GameMode = 'classic' | 'minefield';
+
 export type GameSettings = {
   winningScore: number;
   levelId: string;
@@ -15,6 +17,7 @@ export type GameSettings = {
   rareEnergyCount: number;
   hazardCount: number;
   behaviorPickupCount: number;
+  mode: GameMode;
 };
 
 const parsedLevels: LevelSchema[] = Array.isArray(levels) ? (levels as LevelSchema[]) : [];
@@ -27,7 +30,19 @@ const defaultSettings: GameSettings = {
   energyCount: 6,
   rareEnergyCount: 1,
   hazardCount: 2,
-  behaviorPickupCount: 2
+  behaviorPickupCount: 2,
+  mode: 'classic'
+};
+
+const modeMetadata: Record<GameMode, { label: string; description: string }> = {
+  classic: {
+    label: 'Classic Duel',
+    description: 'Balanced spread of pickups, light hazards, and plenty of room to kite your rival.'
+  },
+  minefield: {
+    label: 'Minefield Rush',
+    description: 'Hazards flood the arena and move faster—keep dodging while you collect energy.'
+  }
 };
 
 let activeSettings: GameSettings = { ...defaultSettings };
@@ -63,6 +78,10 @@ export function cycleLevel(direction: 1 | -1): void {
   const currentIndex = parsedLevels.findIndex((level) => level.id === activeSettings.levelId);
   const nextIndex = (currentIndex + direction + parsedLevels.length) % parsedLevels.length;
   activeSettings = { ...activeSettings, levelId: parsedLevels[nextIndex].id };
+}
+
+export function getModeMetadata(mode: GameMode): { label: string; description: string } {
+  return modeMetadata[mode] ?? modeMetadata.classic;
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));

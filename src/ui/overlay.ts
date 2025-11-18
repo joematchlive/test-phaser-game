@@ -44,8 +44,10 @@ export class Overlay {
         <li><strong>Pilot Two:</strong> Arrow Keys to move, Enter to Dash, P to Grapple.</li>
         <li>Dash bars under each score show cooldown progress—wait for a full bar to burst again.</li>
         <li>Green orbs are +1, radiant gold cores are +3. Red pulses subtract 2 and shake your craft.</li>
-        <li>Cyan boosters and magenta dampeners alter your speed. Neon rings around the players and mini bars on the HUD show how long the effect lasts.</li>
-        <li>Press ESC at any time to head back to the menu and adjust arenas, hazards, or score limits.</li>
+        <li>Cyan boosters, magenta dampeners, pale prisms, and ember disruptors now appear. Use them for surges, to slow rivals, cloak yourself, or hex the other pilot.</li>
+        <li>Neon rings (or the lack of one when cloaked) plus mini bars on the HUD show how long each modifier lasts.</li>
+        <li>Moving gates and optional Minefield mode add constant motion to obstacles—watch your positioning.</li>
+        <li>Press ESC at any time to head back to the menu and adjust arenas, hazards, score limits, or the active mode.</li>
       </ul>
     `;
     document.body.appendChild(this.instructionPanel);

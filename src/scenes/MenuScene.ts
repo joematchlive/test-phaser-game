@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { getActiveSettings, getLevelById } from '../state/settings';
+import { getActiveSettings, getLevelById, getModeMetadata } from '../state/settings';
 
 export class MenuScene extends Phaser.Scene {
   constructor() {
@@ -49,7 +49,22 @@ export class MenuScene extends Phaser.Scene {
     );
     levelInfo.setOrigin(0.5);
 
-    const hint = this.add.text(this.scale.width / 2, 520, 'Change arena layouts in Settings, press ESC anytime to come back.', {
+    const modeMeta = getModeMetadata(settings.mode);
+    const modeInfo = this.add.text(
+      this.scale.width / 2,
+      500,
+      `Mode: ${modeMeta.label}\n${modeMeta.description}`,
+      {
+        fontSize: '16px',
+        fontFamily: 'Space Mono, monospace',
+        color: '#fffffe',
+        align: 'center',
+        wordWrap: { width: 520 }
+      }
+    );
+    modeInfo.setOrigin(0.5);
+
+    const hint = this.add.text(this.scale.width / 2, 560, 'Change arena layouts in Settings, press ESC anytime to come back.', {
       fontSize: '14px',
       fontFamily: 'Space Mono, monospace',
       color: '#fffffe',
