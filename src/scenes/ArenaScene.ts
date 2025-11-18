@@ -20,12 +20,14 @@ type Player = {
 const PLAYER_SPEED = 220;
 const DASH_SPEED = 420;
 const DASH_COOLDOWN = 800;
+const DASH_DURATION = 180;
 
 export class ArenaScene extends Phaser.Scene {
   private overlay?: Overlay;
   private players: Player[] = [];
   private energy?: Phaser.Physics.Arcade.Group;
   private lastDash: Record<string, number> = {};
+  private dashState: Record<string, { direction: Phaser.Math.Vector2; until: number } | undefined> = {};
 
   constructor() {
     super('Arena');
@@ -34,6 +36,14 @@ export class ArenaScene extends Phaser.Scene {
   create(): void {
     this.createBackground();
     this.overlay = new Overlay();
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.overlay?.destroy();
+      this.overlay = undefined;
+    });
+    this.events.once(Phaser.Scenes.Events.DESTROY, () => {
+      this.overlay?.destroy();
+      this.overlay = undefined;
+    });
 
     this.players.push(this.createPlayer({
       id: 'p1',
@@ -42,7 +52,7 @@ export class ArenaScene extends Phaser.Scene {
       x: 200,
       y: 300,
       keys: this.createKeys(['W', 'S', 'A', 'D']),
-      dash: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT)
+      dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT)
     }));
 
     this.players.push(this.createPlayer({
@@ -52,18 +62,19 @@ export class ArenaScene extends Phaser.Scene {
       x: 600,
       y: 300,
       keys: this.createKeys(['UP', 'DOWN', 'LEFT', 'RIGHT']),
-      dash: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER)
+      dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER)
     }));
 
     this.energy = this.physics.add.group();
     this.spawnEnergyOrbs();
     this.physics.add.overlap(this.players.map((p) => p.shape), this.energy, (_playerShape, energy) => {
       const player = this.players.find((p) => p.shape === _playerShape);
-      if (!player || !energy.active) {
+      const orb = energy as Phaser.GameObjects.Arc;
+      if (!player || !orb.active) {
         return;
       }
 
-      energy.destroy();
+      orb.destroy();
       player.score += 1;
       if (player.score >= 10) {
         this.scene.restart();
@@ -82,6 +93,15 @@ export class ArenaScene extends Phaser.Scene {
     const body = player.body;
     const { up, down, left, right } = player.controls;
 
+    const dashInfo = this.dashState[player.id];
+    if (dashInfo && dashInfo.until > this.time.now) {
+      body.setVelocity(dashInfo.direction.x * DASH_SPEED, dashInfo.direction.y * DASH_SPEED);
+      return;
+    }
+    if (dashInfo && dashInfo.until <= this.time.now) {
+      this.dashState[player.id] = undefined;
+    }
+
     const velocity = new Phaser.Math.Vector2(0, 0);
     if (up.isDown) velocity.y -= 1;
     if (down.isDown) velocity.y += 1;
@@ -92,9 +112,12 @@ export class ArenaScene extends Phaser.Scene {
     body.setVelocity(velocity.x * PLAYER_SPEED, velocity.y * PLAYER_SPEED);
 
     const dashReady = this.time.now - (this.lastDash[player.id] ?? 0) >= DASH_COOLDOWN;
-    if (dashReady && Phaser.Input.Keyboard.JustDown(player.dashKey) && velocity.lengthSq() > 0) {
-      body.setVelocity(velocity.x * DASH_SPEED, velocity.y * DASH_SPEED);
+    const hasInput = velocity.lengthSq() > 0;
+    if (dashReady && hasInput && Phaser.Input.Keyboard.JustDown(player.dashKey)) {
+      const direction = velocity.clone();
+      this.dashState[player.id] = { direction, until: this.time.now + DASH_DURATION };
       this.lastDash[player.id] = this.time.now;
+      body.setVelocity(direction.x * DASH_SPEED, direction.y * DASH_SPEED);
       this.addDashBurst(player.shape.x, player.shape.y, player.color);
     }
   }
@@ -140,10 +163,10 @@ export class ArenaScene extends Phaser.Scene {
 
   private createKeys(keys: [string, string, string, string]): Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key> {
     return {
-      up: this.input.keyboard.addKey(keys[0]),
-      down: this.input.keyboard.addKey(keys[1]),
-      left: this.input.keyboard.addKey(keys[2]),
-      right: this.input.keyboard.addKey(keys[3])
+      up: this.input.keyboard!.addKey(keys[0]),
+      down: this.input.keyboard!.addKey(keys[1]),
+      left: this.input.keyboard!.addKey(keys[2]),
+      right: this.input.keyboard!.addKey(keys[3])
     } as Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key>;
   }
 
