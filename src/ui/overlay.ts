@@ -16,7 +16,17 @@ export type ScoreState = {
   wins: number;
   hookCharges: number;
   maxHookCharges: number;
+  surfaceLabel?: string;
+  power?: PowerState;
 };
+
+export type PowerState = {
+  label: string;
+  ready: boolean;
+  hint?: string;
+};
+
+export const OVERLAY_POWER_EVENT = 'overlay:power-activate';
 
 type OverlayOptions = {
   targetScore: number;
@@ -49,11 +59,13 @@ export class Overlay {
       <h3>Arena Briefing</h3>
       <p>Race to ${targetScore} energy by scooping power cores, grappling rivals, and dodging hazards.</p>
       <ul>
-        <li><strong>Pilot One:</strong> WASD to move, Shift to Dash, E to Grapple.</li>
-        <li><strong>Pilot Two:</strong> Arrow Keys to move, Enter to Dash, P to Grapple.</li>
+        <li><strong>Pilot One:</strong> WASD to move, Shift to Dash, E to Grapple, R to deploy a collected power.</li>
+        <li><strong>Pilot Two:</strong> Arrow Keys to move, Enter to Dash, P to Grapple, O to deploy a collected power.</li>
         <li>Dash bars under each score show cooldown progress—wait for a full bar to burst again.</li>
         <li>Green orbs are +1, radiant gold cores are +3. Red pulses subtract 2 and shake your craft.</li>
         <li>Cyan boosters, magenta dampeners, pale prisms, and ember disruptors now appear. Use them for surges, to slow rivals, cloak yourself, or hex the other pilot.</li>
+        <li>Glowing floor plates influence traction—watch the "Surface" label next to your score to know if you're cruising or dragging.</li>
+        <li>Power pickups grant single-use tools like Glue Drop. Hold only one at a time and tap the action key or button beside your score to spend it.</li>
         <li>Rope spools are scarce but restock a grapple charge (you only hold three). Spend hooks wisely.</li>
         ${debtLine}
         <li>Neon rings (or the lack of one when cloaked) plus mini bars on the HUD show how long each modifier lasts.</li>
@@ -99,6 +111,11 @@ export class Overlay {
       meta.appendChild(hooks);
       row.appendChild(meta);
 
+      const surface = document.createElement('span');
+      surface.className = 'scoreboard__surface';
+      surface.textContent = `Surface: ${score.surfaceLabel ?? 'Base Hull'}`;
+      row.appendChild(surface);
+
       const dashGauge = document.createElement('div');
       dashGauge.className = 'scoreboard__dash';
       dashGauge.setAttribute('data-ready', String(score.dashReady));
@@ -135,6 +152,21 @@ export class Overlay {
         });
         row.appendChild(effectWrap);
       }
+
+      const powerButton = document.createElement('button');
+      powerButton.className = 'scoreboard__power-button';
+      powerButton.type = 'button';
+      powerButton.disabled = !score.power?.ready;
+      powerButton.textContent = score.power
+        ? score.power.ready
+          ? `Use ${score.power.label}${score.power.hint ? ` (${score.power.hint})` : ''}`
+          : `Holding ${score.power.label}`
+        : 'No Power';
+      powerButton.addEventListener('click', () => {
+        if (!score.power?.ready) return;
+        window.dispatchEvent(new CustomEvent(OVERLAY_POWER_EVENT, { detail: { playerId: score.id } }));
+      });
+      row.appendChild(powerButton);
 
       this.scoreboard.appendChild(row);
     });

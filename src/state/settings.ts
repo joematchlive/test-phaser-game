@@ -1,11 +1,23 @@
 import levels from '../data/levels.json';
 
+export type SurfaceSchema = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string;
+  multiplier: number;
+  color?: number;
+};
+
 export type LevelSchema = {
   id: string;
   name: string;
   description: string;
   spawnPoints: Array<{ x: number; y: number }>;
   solids: Array<{ x: number; y: number; width: number; height: number }>;
+  surfaces?: SurfaceSchema[];
 };
 
 export type GameMode = 'classic' | 'minefield';
@@ -62,7 +74,8 @@ export function getLevelById(id: string): LevelSchema {
       { x: 200, y: 200 },
       { x: 600, y: 400 }
     ],
-    solids: []
+    solids: [],
+    surfaces: []
   };
   return parsedLevels.find((level) => level.id === id) ?? fallback;
 }

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import { GameSettings, getActiveSettings, getLevelById, LevelSchema } from '../state/settings';
-import { Overlay, ScoreState } from '../ui/overlay';
+import { GameSettings, SurfaceSchema, getActiveSettings, getLevelById, LevelSchema } from '../state/settings';
+import { OVERLAY_POWER_EVENT, Overlay, ScoreState } from '../ui/overlay';
 
 type Player = {
   id: string;
@@ -12,6 +12,8 @@ type Player = {
   wins: number;
   dashKey: Phaser.Input.Keyboard.Key;
   hookKey: Phaser.Input.Keyboard.Key;
+  powerKey: Phaser.Input.Keyboard.Key;
+  powerKeyLabel: string;
   controls: {
     up: Phaser.Input.Keyboard.Key;
     down: Phaser.Input.Keyboard.Key;
@@ -19,10 +21,14 @@ type Player = {
     right: Phaser.Input.Keyboard.Key;
   };
   speedMultiplier: number;
+  surfaceMultiplier: number;
   speedResetTimer?: Phaser.Time.TimerEvent;
   activeEffect?: PlayerEffect;
   hookCharges: number;
   maxHookCharges: number;
+  carriedPower?: PlayerPowerType;
+  currentSurfaceId?: string;
+  currentSurfaceLabel?: string;
 };
 
 type PlayerEffect = {
@@ -34,6 +40,16 @@ type PlayerEffect = {
 };
 
 type BehaviorEffect = 'boost' | 'slow' | 'cloak' | 'disrupt';
+
+type SurfaceZone = SurfaceSchema & { shape: Phaser.GameObjects.Rectangle; expiresAt?: number };
+
+type PlayerPowerType = 'glue';
+
+type PowerDefinition = {
+  id: PlayerPowerType;
+  label: string;
+  pickupColor: number;
+};
 
 const PLAYER_SPEED = 220;
 const DASH_SPEED = 420;
@@ -52,6 +68,19 @@ const ROPE_RESPAWN_DELAY = 12000;
 const MAX_SPAWN_ATTEMPTS = 30;
 const CLOAK_DURATION = 4500;
 const DISRUPT_DURATION = 3500;
+const POWER_RESPAWN_DELAY = 10000;
+const POWER_PICKUP_LIMIT = 2;
+const GLUE_DURATION = 6000;
+const GLUE_MULTIPLIER = 0.45;
+const GLUE_SIZE = 140;
+
+const POWER_DEFINITIONS: Record<PlayerPowerType, PowerDefinition> = {
+  glue: {
+    id: 'glue',
+    label: 'Glue Drop',
+    pickupColor: 0xffc8dd
+  }
+};
 
 export class ArenaScene extends Phaser.Scene {
   private overlay?: Overlay;
@@ -61,6 +90,7 @@ export class ArenaScene extends Phaser.Scene {
   private hazards?: Phaser.Physics.Arcade.Group;
   private behaviorPickups?: Phaser.Physics.Arcade.Group;
   private ropePickups?: Phaser.Physics.Arcade.Group;
+  private powerPickups?: Phaser.Physics.Arcade.Group;
   private obstacles?: Phaser.Physics.Arcade.StaticGroup;
   private movingObstacles?: Phaser.Physics.Arcade.Group;
   private lastDash: Record<string, number> = {};
@@ -75,6 +105,8 @@ export class ArenaScene extends Phaser.Scene {
   private escapeKey?: Phaser.Input.Keyboard.Key;
   private matchWins: Record<string, number> = {};
   private roundOver = false;
+  private surfaceZones: SurfaceZone[] = [];
+  private overlayPowerHandler?: (event: Event) => void;
 
   constructor() {
     super('Arena');
@@ -92,6 +124,12 @@ export class ArenaScene extends Phaser.Scene {
     this.activeHooks = {};
     this.roundOver = false;
     // Reset group references so we don't access destroyed children during restart
+    this.energy?.clear(true, true);
+    this.rareEnergy?.clear(true, true);
+    this.hazards?.clear(true, true);
+    this.behaviorPickups?.clear(true, true);
+    this.ropePickups?.clear(true, true);
+    this.powerPickups?.clear(true, true);
     this.energy = undefined;
     this.rareEnergy = undefined;
     this.hazards = undefined;
@@ -99,6 +137,9 @@ export class ArenaScene extends Phaser.Scene {
     this.ropePickups = undefined;
     this.obstacles = undefined;
     this.movingObstacles = undefined;
+    this.powerPickups = undefined;
+    this.surfaceZones.forEach((zone) => zone.shape.destroy());
+    this.surfaceZones = [];
 
     this.createBackground();
     this.overlay = new Overlay({
@@ -110,16 +151,35 @@ export class ArenaScene extends Phaser.Scene {
       this.overlay = undefined;
       this.escapeKey?.destroy();
       this.escapeKey = undefined;
+      if (typeof window !== 'undefined' && this.overlayPowerHandler) {
+        window.removeEventListener(OVERLAY_POWER_EVENT, this.overlayPowerHandler as EventListener);
+        this.overlayPowerHandler = undefined;
+      }
     });
     this.events.once(Phaser.Scenes.Events.DESTROY, () => {
       this.overlay?.destroy();
       this.overlay = undefined;
       this.escapeKey?.destroy();
       this.escapeKey = undefined;
+      if (typeof window !== 'undefined' && this.overlayPowerHandler) {
+        window.removeEventListener(OVERLAY_POWER_EVENT, this.overlayPowerHandler as EventListener);
+        this.overlayPowerHandler = undefined;
+      }
     });
 
     this.escapeKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
     this.escapeKey?.on('down', () => this.scene.start('Menu'));
+
+    if (typeof window !== 'undefined' && !this.overlayPowerHandler) {
+      this.overlayPowerHandler = (event: Event) => {
+        const payload = event as CustomEvent<{ playerId: string }>;
+        const player = this.players.find((p) => p.id === payload.detail.playerId);
+        if (player) {
+          this.consumePlayerPower(player);
+        }
+      };
+      window.addEventListener(OVERLAY_POWER_EVENT, this.overlayPowerHandler as EventListener);
+    }
 
     const spawnPoints = this.level.spawnPoints.length
       ? this.level.spawnPoints
@@ -135,7 +195,11 @@ export class ArenaScene extends Phaser.Scene {
         color: 0x7f5af0,
         keys: this.createKeys(['W', 'S', 'A', 'D']),
         dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
-        hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E)
+        hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E),
+        power: {
+          key: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R),
+          label: 'R'
+        }
       },
       {
         id: 'p2',
@@ -143,7 +207,11 @@ export class ArenaScene extends Phaser.Scene {
         color: 0xff8906,
         keys: this.createKeys(['UP', 'DOWN', 'LEFT', 'RIGHT']),
         dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER),
-        hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P)
+        hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P),
+        power: {
+          key: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.O),
+          label: 'O'
+        }
       }
     ];
 
@@ -168,17 +236,21 @@ export class ArenaScene extends Phaser.Scene {
     this.movingObstacles = this.physics.add.group({ immovable: true });
     this.createMovingObstacles();
 
+    this.createSurfaces();
+
     this.energy = this.physics.add.group();
     this.rareEnergy = this.physics.add.group();
     this.hazards = this.physics.add.group();
     this.behaviorPickups = this.physics.add.group();
     this.ropePickups = this.physics.add.group();
+    this.powerPickups = this.physics.add.group();
 
     this.spawnEnergyOrbs(this.settings.energyCount);
     this.spawnRareEnergy(this.settings.rareEnergyCount);
     this.spawnHazards();
     this.spawnBehaviorPickups(this.settings.behaviorPickupCount);
     this.spawnRopePickups(ROPE_PICKUP_LIMIT);
+    this.spawnPowerPickups(POWER_PICKUP_LIMIT);
 
     const playerShapes = this.players.map((p) => p.shape);
     if (this.obstacles) {
@@ -269,10 +341,25 @@ export class ArenaScene extends Phaser.Scene {
       this.adjustHookCharges(player, 1);
       this.time.delayedCall(ROPE_RESPAWN_DELAY, () => this.spawnRopePickups(1));
     });
+
+    this.physics.add.overlap(playerShapes, this.powerPickups, (_playerShape, pickup) => {
+      const player = this.players.find((p) => p.shape === _playerShape);
+      const power = pickup as Phaser.GameObjects.Shape;
+      if (!player || !power.active) return;
+      if (player.carriedPower) {
+        return;
+      }
+      const powerId = (power.getData('powerId') as PlayerPowerType | undefined) ?? 'glue';
+      power.destroy();
+      this.grantPower(player, powerId);
+      this.time.delayedCall(POWER_RESPAWN_DELAY, () => this.spawnPowerPickups(1));
+    });
   }
 
   update(): void {
+    this.pruneSurfaceZones();
     this.players.forEach((player) => {
+      this.updatePlayerSurface(player);
       this.updatePlayerMovement(player);
       this.updateEffectAura(player);
     });
@@ -305,7 +392,8 @@ export class ArenaScene extends Phaser.Scene {
     if (right.isDown) velocity.x += 1;
 
     velocity.normalize();
-    body.setVelocity(velocity.x * PLAYER_SPEED * player.speedMultiplier, velocity.y * PLAYER_SPEED * player.speedMultiplier);
+    const totalSpeedMultiplier = player.speedMultiplier * player.surfaceMultiplier;
+    body.setVelocity(velocity.x * PLAYER_SPEED * totalSpeedMultiplier, velocity.y * PLAYER_SPEED * totalSpeedMultiplier);
 
     const dashReady = this.time.now - (this.lastDash[player.id] ?? 0) >= DASH_COOLDOWN;
     const hasInput = velocity.lengthSq() > 0;
@@ -319,6 +407,10 @@ export class ArenaScene extends Phaser.Scene {
 
     if (Phaser.Input.Keyboard.JustDown(player.hookKey)) {
       this.attemptHook(player);
+    }
+
+    if (Phaser.Input.Keyboard.JustDown(player.powerKey)) {
+      this.consumePlayerPower(player);
     }
   }
 
@@ -345,6 +437,7 @@ export class ArenaScene extends Phaser.Scene {
     dash: Phaser.Input.Keyboard.Key;
     hook: Phaser.Input.Keyboard.Key;
     wins: number;
+    power: { key: Phaser.Input.Keyboard.Key; label: string };
   }): Player {
     const shape = this.add.rectangle(config.x, config.y, 48, 48, config.color, 0.9);
     this.physics.add.existing(shape);
@@ -362,7 +455,10 @@ export class ArenaScene extends Phaser.Scene {
       controls: config.keys,
       dashKey: config.dash,
       hookKey: config.hook,
+      powerKey: config.power.key,
+      powerKeyLabel: config.power.label,
       speedMultiplier: 1,
+      surfaceMultiplier: 1,
       hookCharges: MAX_HOOK_CHARGES,
       maxHookCharges: MAX_HOOK_CHARGES
     };
@@ -457,6 +553,24 @@ export class ArenaScene extends Phaser.Scene {
       pickup.setStrokeStyle(2, 0x0f0e17, 0.8);
       this.physics.add.existing(pickup);
       this.ropePickups.add(pickup);
+    }
+  }
+
+  private spawnPowerPickups(count?: number): void {
+    if (!this.powerPickups) return;
+    const amount = count ?? 1;
+    for (let i = 0; i < amount; i += 1) {
+      if (this.powerPickups.countActive(true) >= POWER_PICKUP_LIMIT) {
+        break;
+      }
+      const position = this.findSpawnPosition(16);
+      if (!position) continue;
+      const definition = POWER_DEFINITIONS.glue;
+      const pickup = this.add.star(position.x, position.y, 6, 10, 18, definition.pickupColor, 0.95);
+      pickup.setStrokeStyle(2, 0x0f0e17, 0.8);
+      pickup.setData('powerId', definition.id);
+      this.physics.add.existing(pickup);
+      this.powerPickups.add(pickup);
     }
   }
 
@@ -755,7 +869,15 @@ export class ArenaScene extends Phaser.Scene {
       effects,
       wins: player.wins,
       hookCharges: player.hookCharges,
-      maxHookCharges: player.maxHookCharges
+      maxHookCharges: player.maxHookCharges,
+      surfaceLabel: player.currentSurfaceLabel,
+      power: player.carriedPower
+        ? {
+            label: POWER_DEFINITIONS[player.carriedPower].label,
+            ready: true,
+            hint: player.powerKeyLabel
+          }
+        : undefined
     };
   }
 
@@ -852,5 +974,103 @@ export class ArenaScene extends Phaser.Scene {
     this.overlay?.destroy();
     Object.values(this.activeHooks).forEach((hook) => hook?.tether.destroy());
     this.activeHooks = {};
+    if (typeof window !== 'undefined' && this.overlayPowerHandler) {
+      window.removeEventListener(OVERLAY_POWER_EVENT, this.overlayPowerHandler as EventListener);
+      this.overlayPowerHandler = undefined;
+    }
+  }
+
+  private createSurfaces(): void {
+    const surfaces = this.level?.surfaces ?? [];
+    surfaces.forEach((surface) => this.addSurfaceZone(surface));
+  }
+
+  private addSurfaceZone(surface: SurfaceSchema, lifespan?: number): SurfaceZone {
+    const shape = this.add.rectangle(surface.x, surface.y, surface.width, surface.height, surface.color ?? 0xffffff, 0.25);
+    shape.setDepth(-0.5);
+    shape.setBlendMode(Phaser.BlendModes.ADD);
+    const expiresAt = lifespan ? this.time.now + lifespan : undefined;
+    const zone: SurfaceZone = { ...surface, shape, expiresAt };
+    this.surfaceZones.push(zone);
+    return zone;
+  }
+
+  private updatePlayerSurface(player: Player): void {
+    const bounds = player.shape.getBounds();
+    let overlap: SurfaceZone | undefined;
+    for (let i = this.surfaceZones.length - 1; i >= 0; i -= 1) {
+      const zone = this.surfaceZones[i];
+      if (Phaser.Geom.Intersects.RectangleToRectangle(bounds, zone.shape.getBounds())) {
+        overlap = zone;
+        break;
+      }
+    }
+    if (overlap) {
+      if (player.currentSurfaceId !== overlap.id) {
+        player.currentSurfaceId = overlap.id;
+        player.currentSurfaceLabel = overlap.label;
+        player.surfaceMultiplier = overlap.multiplier;
+      }
+      return;
+    }
+    if (player.currentSurfaceId) {
+      this.clearSurfaceState(player);
+    }
+  }
+
+  private clearSurfaceState(player: Player): void {
+    player.currentSurfaceId = undefined;
+    player.currentSurfaceLabel = undefined;
+    player.surfaceMultiplier = 1;
+  }
+
+  private pruneSurfaceZones(): void {
+    if (!this.surfaceZones.length) return;
+    const now = this.time.now;
+    this.surfaceZones = this.surfaceZones.filter((zone) => {
+      if (zone.expiresAt && zone.expiresAt <= now) {
+        zone.shape.destroy();
+        this.players
+          .filter((player) => player.currentSurfaceId === zone.id)
+          .forEach((player) => this.clearSurfaceState(player));
+        return false;
+      }
+      return true;
+    });
+  }
+
+  private grantPower(player: Player, power: PlayerPowerType): void {
+    player.carriedPower = power;
+    this.addStatusPing(player.shape.x, player.shape.y, POWER_DEFINITIONS[power].pickupColor);
+  }
+
+  private consumePlayerPower(player: Player): void {
+    if (!player.carriedPower) {
+      return;
+    }
+    switch (player.carriedPower) {
+      case 'glue':
+        this.deployGlueField(player);
+        break;
+      default:
+        break;
+    }
+    player.carriedPower = undefined;
+  }
+
+  private deployGlueField(player: Player): void {
+    const id = `glue-${this.time.now}-${Phaser.Math.Between(0, 999)}`;
+    const zone: SurfaceSchema = {
+      id,
+      label: 'Glue Slick',
+      x: player.shape.x,
+      y: player.shape.y,
+      width: GLUE_SIZE,
+      height: GLUE_SIZE,
+      multiplier: GLUE_MULTIPLIER,
+      color: 0xffa6c9
+    };
+    this.addSurfaceZone(zone, GLUE_DURATION);
+    this.addStatusPing(player.shape.x, player.shape.y, 0xffa6c9);
   }
 }
