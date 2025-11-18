@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { clampSetting, cycleLevel, getActiveSettings, getLevelById } from '../state/settings';
+import { clampSetting, cycleLevel, getActiveSettings, getLevelById, getModeMetadata, updateSettings } from '../state/settings';
+import type { GameMode } from '../state/settings';
 
 type StepperConfig = {
   label: string;
@@ -44,6 +45,12 @@ export class SettingsScene extends Phaser.Scene {
         label: 'Behavior pickups',
         adjust: (delta) => clampSetting('behaviorPickupCount', delta, 0, 4),
         getValue: () => `${getActiveSettings().behaviorPickupCount} modifiers`
+      },
+      {
+        label: 'Mode',
+        adjust: (delta) => this.cycleMode(delta > 0 ? 1 : -1),
+        getValue: () => getModeMetadata(getActiveSettings().mode).label,
+        description: () => getModeMetadata(getActiveSettings().mode).description
       },
       {
         label: 'Arena layout',
@@ -148,4 +155,13 @@ export class SettingsScene extends Phaser.Scene {
       grid.lineBetween(0, y, this.scale.width, y);
     }
   }
+
+  private cycleMode(direction: 1 | -1): void {
+    const modes: GameMode[] = ['classic', 'minefield'];
+    const current = getActiveSettings().mode;
+    const index = modes.indexOf(current);
+    const next = modes[(index + direction + modes.length) % modes.length];
+    updateSettings({ mode: next });
+  }
+
 }

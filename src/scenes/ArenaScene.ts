@@ -23,12 +23,14 @@ type Player = {
 };
 
 type PlayerEffect = {
-  type: 'boost' | 'slow';
-  aura: Phaser.GameObjects.Arc;
+  type: 'boost' | 'slow' | 'cloak';
+  aura?: Phaser.GameObjects.Arc;
   expires: number;
   duration: number;
   color: number;
 };
+
+type BehaviorEffect = 'boost' | 'slow' | 'cloak' | 'disrupt';
 
 const PLAYER_SPEED = 220;
 const DASH_SPEED = 420;
@@ -39,6 +41,8 @@ const HOOK_DURATION = 500;
 const HOOK_PULL_SPEED = 340;
 const HOOK_COOLDOWN = 1800;
 const MAX_SPAWN_ATTEMPTS = 30;
+const CLOAK_DURATION = 4500;
+const DISRUPT_DURATION = 3500;
 
 export class ArenaScene extends Phaser.Scene {
   private overlay?: Overlay;
@@ -48,6 +52,7 @@ export class ArenaScene extends Phaser.Scene {
   private hazards?: Phaser.Physics.Arcade.Group;
   private behaviorPickups?: Phaser.Physics.Arcade.Group;
   private obstacles?: Phaser.Physics.Arcade.StaticGroup;
+  private movingObstacles?: Phaser.Physics.Arcade.Group;
   private lastDash: Record<string, number> = {};
   private dashState: Record<string, { direction: Phaser.Math.Vector2; until: number } | undefined> = {};
   private hookTimers: Record<string, number> = {};
@@ -132,6 +137,9 @@ export class ArenaScene extends Phaser.Scene {
     this.obstacles = this.physics.add.staticGroup();
     this.createObstacles();
 
+    this.movingObstacles = this.physics.add.group({ immovable: true });
+    this.createMovingObstacles();
+
     this.energy = this.physics.add.group();
     this.rareEnergy = this.physics.add.group();
     this.hazards = this.physics.add.group();
@@ -139,7 +147,7 @@ export class ArenaScene extends Phaser.Scene {
 
     this.spawnEnergyOrbs(this.settings.energyCount);
     this.spawnRareEnergy(this.settings.rareEnergyCount);
-    this.spawnHazards(this.settings.hazardCount);
+    this.spawnHazards();
     this.spawnBehaviorPickups(this.settings.behaviorPickupCount);
 
     const playerShapes = this.players.map((p) => p.shape);
@@ -147,6 +155,13 @@ export class ArenaScene extends Phaser.Scene {
       this.physics.add.collider(playerShapes, this.obstacles);
       if (this.hazards) {
         this.physics.add.collider(this.hazards, this.obstacles);
+      }
+    }
+    if (this.movingObstacles) {
+      this.physics.add.collider(playerShapes, this.movingObstacles);
+      this.physics.add.collider(this.movingObstacles, this.movingObstacles);
+      if (this.hazards) {
+        this.physics.add.collider(this.hazards, this.movingObstacles);
       }
     }
     this.physics.add.collider(playerShapes, playerShapes);
@@ -190,12 +205,23 @@ export class ArenaScene extends Phaser.Scene {
       const player = this.players.find((p) => p.shape === _playerShape);
       if (!player) return;
       const item = pickup as Phaser.GameObjects.Shape;
-      const effect = item.getData('effect');
+      const effect = (item.getData('effect') as BehaviorEffect | undefined) ?? 'boost';
       item.destroy();
-      if (effect === 'boost') {
-        this.applySpeedModifier(player, 1.5, 3500, 'boost');
-      } else if (effect === 'slow') {
-        this.applySpeedModifier(player, 0.6, 3500, 'slow');
+      switch (effect) {
+        case 'boost':
+          this.applySpeedModifier(player, 1.5, 3500, 'boost');
+          break;
+        case 'slow':
+          this.applySpeedModifier(player, 0.6, 3500, 'slow');
+          break;
+        case 'cloak':
+          this.applyCloak(player, CLOAK_DURATION);
+          break;
+        case 'disrupt':
+          this.applyDisruptEffect(player);
+          break;
+        default:
+          break;
       }
       this.spawnBehaviorPickups(1);
     });
@@ -324,7 +350,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private spawnHazards(count?: number): void {
     if (!this.hazards) return;
-    const amount = count ?? this.settings?.hazardCount ?? 2;
+    const amount = count ?? this.getHazardTargetCount();
     for (let i = 0; i < amount; i += 1) {
       const position = this.findSpawnPosition(16);
       if (!position) continue;
@@ -332,23 +358,33 @@ export class ArenaScene extends Phaser.Scene {
       this.physics.add.existing(orb);
       const body = orb.body as Phaser.Physics.Arcade.Body;
       body.setCircle(12);
-      body.setVelocity(Phaser.Math.Between(-40, 40), Phaser.Math.Between(-40, 40));
+      const speed = this.settings.mode === 'minefield' ? 110 : 40;
+      body.setVelocity(Phaser.Math.Between(-speed, speed), Phaser.Math.Between(-speed, speed));
       body.setBounce(1, 1);
       body.setCollideWorldBounds(true);
       this.hazards.add(orb);
     }
   }
 
+  private getHazardTargetCount(): number {
+    const base = this.settings?.hazardCount ?? 2;
+    if (this.settings.mode === 'minefield') {
+      return Math.max(base * 3, base + 4);
+    }
+    return base;
+  }
+
   private spawnBehaviorPickups(count?: number): void {
     if (!this.behaviorPickups) return;
-    const effects: Array<'boost' | 'slow'> = ['boost', 'slow'];
+    const effects: BehaviorEffect[] = ['boost', 'slow', 'cloak', 'disrupt'];
     const amount = count ?? this.settings?.behaviorPickupCount ?? 2;
     for (let i = 0; i < amount; i += 1) {
       const position = this.findSpawnPosition(14);
       if (!position) continue;
       const effect = effects[(i + Phaser.Math.Between(0, effects.length - 1)) % effects.length];
-      const color = effect === 'boost' ? 0x00f0ff : 0xff006e;
-      const pickup = this.add.polygon(position.x, position.y, this.createRegularPolygonPoints(6, 16), color, 0.85);
+      const color = this.getBehaviorColor(effect);
+      const sides = effect === 'cloak' ? 4 : effect === 'disrupt' ? 5 : 6;
+      const pickup = this.add.polygon(position.x, position.y, this.createRegularPolygonPoints(sides, 16), color, 0.85);
       pickup.setData('effect', effect);
       this.physics.add.existing(pickup);
       this.behaviorPickups.add(pickup);
@@ -378,22 +414,65 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private setPlayerEffect(player: Player, type: 'boost' | 'slow', duration: number): void {
+  private applyCloak(player: Player, duration: number): void {
+    this.setPlayerEffect(player, 'cloak', duration, 0xffffff, { showAura: false });
+    player.shape.setAlpha(0.2);
+    player.shape.setStrokeStyle(2, 0xffffff, 0.5);
+    this.time.delayedCall(duration, () => {
+      if (player.activeEffect?.type === 'cloak') {
+        this.clearPlayerEffect(player);
+      }
+    });
+  }
+
+  private applyDisruptEffect(player: Player): void {
+    const opponent = this.players.find((p) => p.id !== player.id);
+    if (!opponent) return;
+    this.applySpeedModifier(opponent, 0.55, DISRUPT_DURATION, 'slow');
+    this.addStatusPing(opponent.shape.x, opponent.shape.y, this.getBehaviorColor('disrupt'));
+  }
+
+  private addStatusPing(x: number, y: number, color: number): void {
+    const pulse = this.add.circle(x, y, 10, color, 0.4);
+    this.tweens.add({
+      targets: pulse,
+      scale: { from: 0.5, to: 2.5 },
+      alpha: { from: 0.6, to: 0 },
+      duration: 420,
+      onComplete: () => pulse.destroy()
+    });
+  }
+
+  private setPlayerEffect(
+    player: Player,
+    type: PlayerEffect['type'],
+    duration: number,
+    tint?: number,
+    options?: { showAura?: boolean }
+  ): void {
     this.clearPlayerEffect(player);
-    const color = type === 'boost' ? 0x00f0ff : 0xff006e;
-    const aura = this.add.circle(player.shape.x, player.shape.y, 34, color, 0.06);
-    aura.setStrokeStyle(3, color, 0.9);
-    aura.setDepth(2);
+    const color = tint ?? this.getEffectColor(type);
+    const shouldShowAura = options?.showAura ?? type !== 'cloak';
+    let aura: Phaser.GameObjects.Arc | undefined;
+    if (shouldShowAura) {
+      aura = this.add.circle(player.shape.x, player.shape.y, 34, color, 0.06);
+      aura.setStrokeStyle(3, color, 0.9);
+      aura.setDepth(2);
+    }
     player.activeEffect = { type, aura, expires: this.time.now + duration, duration, color };
   }
 
   private clearPlayerEffect(player: Player): void {
-    player.activeEffect?.aura.destroy();
+    if (player.activeEffect?.type === 'cloak') {
+      player.shape.setAlpha(1);
+      player.shape.setStrokeStyle();
+    }
+    player.activeEffect?.aura?.destroy();
     player.activeEffect = undefined;
   }
 
   private updateEffectAura(player: Player): void {
-    if (!player.activeEffect) return;
+    if (!player.activeEffect || !player.activeEffect.aura) return;
     const remaining = player.activeEffect.expires - this.time.now;
     if (remaining <= 0) {
       this.clearPlayerEffect(player);
@@ -476,6 +555,11 @@ export class ArenaScene extends Phaser.Scene {
     );
     if (obstacleOverlap) return true;
 
+    const movingObstacleOverlap = (this.movingObstacles?.getChildren() ?? []).some((shape) =>
+      Phaser.Geom.Intersects.RectangleToRectangle(bounds, (shape as Phaser.GameObjects.Rectangle).getBounds())
+    );
+    if (movingObstacleOverlap) return true;
+
     const overlapsGroup = (group?: Phaser.GameObjects.Group) =>
       group?.getChildren().some((child) => {
         const withBounds = child as Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.GetBounds;
@@ -502,6 +586,34 @@ export class ArenaScene extends Phaser.Scene {
     return points;
   }
 
+  private getBehaviorColor(effect: BehaviorEffect): number {
+    switch (effect) {
+      case 'boost':
+        return 0x00f0ff;
+      case 'slow':
+        return 0xff006e;
+      case 'cloak':
+        return 0xf4f4f4;
+      case 'disrupt':
+        return 0xf25f4c;
+      default:
+        return 0xffffff;
+    }
+  }
+
+  private getEffectColor(type: PlayerEffect['type']): number {
+    switch (type) {
+      case 'boost':
+        return 0x00f0ff;
+      case 'slow':
+        return 0xff006e;
+      case 'cloak':
+        return 0xf4f4f4;
+      default:
+        return 0xffffff;
+    }
+  }
+
   private toScoreState(player: Player): ScoreState {
     const lastDash = this.lastDash[player.id] ?? -Infinity;
     const elapsed = this.time.now - lastDash;
@@ -512,7 +624,7 @@ export class ArenaScene extends Phaser.Scene {
     const effects = player.activeEffect
       ? [
           {
-            label: player.activeEffect.type === 'boost' ? 'Speed Surge' : 'Flux Drag',
+            label: this.describeEffect(player.activeEffect.type),
             percent: Phaser.Math.Clamp(
               (player.activeEffect.expires - this.time.now) / player.activeEffect.duration,
               0,
@@ -535,6 +647,19 @@ export class ArenaScene extends Phaser.Scene {
     };
   }
 
+  private describeEffect(type: PlayerEffect['type']): string {
+    switch (type) {
+      case 'boost':
+        return 'Speed Surge';
+      case 'slow':
+        return 'Flux Drag';
+      case 'cloak':
+        return 'Phase Cloak';
+      default:
+        return 'Modifier';
+    }
+  }
+
   private createObstacles(): void {
     if (!this.obstacles) return;
     const solids = this.level?.solids ?? [];
@@ -543,6 +668,26 @@ export class ArenaScene extends Phaser.Scene {
       this.physics.add.existing(block, true);
       this.obstacles?.add(block);
     });
+  }
+
+  private createMovingObstacles(): void {
+    if (!this.movingObstacles) return;
+    const count = this.settings.mode === 'minefield' ? 4 : 2;
+    for (let i = 0; i < count; i += 1) {
+      const position = this.findSpawnPosition(28);
+      if (!position) continue;
+      const width = Phaser.Math.Between(48, 96);
+      const height = Phaser.Math.Between(16, 28);
+      const block = this.add.rectangle(position.x, position.y, width, height, 0x191724, 0.8);
+      this.physics.add.existing(block);
+      const body = block.body as Phaser.Physics.Arcade.Body;
+      body.setImmovable(true);
+      const speed = this.settings.mode === 'minefield' ? 80 : 50;
+      body.setVelocity(Phaser.Math.Between(-speed, speed), Phaser.Math.Between(-speed, speed));
+      body.setCollideWorldBounds(true);
+      body.setBounce(1, 1);
+      this.movingObstacles.add(block);
+    }
   }
 
   private applyHazardPenalty(player: Player): void {
