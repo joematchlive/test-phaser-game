@@ -9,18 +9,26 @@ type Player = {
   body: Phaser.Physics.Arcade.Body;
   score: number;
   dashKey: Phaser.Input.Keyboard.Key;
+  hookKey: Phaser.Input.Keyboard.Key;
   controls: {
     up: Phaser.Input.Keyboard.Key;
     down: Phaser.Input.Keyboard.Key;
     left: Phaser.Input.Keyboard.Key;
     right: Phaser.Input.Keyboard.Key;
   };
+  speedMultiplier: number;
+  speedResetTimer?: Phaser.Time.TimerEvent;
 };
 
 const PLAYER_SPEED = 220;
 const DASH_SPEED = 420;
 const DASH_COOLDOWN = 800;
 const DASH_DURATION = 180;
+const HOOK_RANGE = 280;
+const HOOK_DURATION = 500;
+const HOOK_PULL_SPEED = 340;
+const HOOK_COOLDOWN = 1800;
+const MAX_SPAWN_ATTEMPTS = 30;
 
 export class ArenaScene extends Phaser.Scene {
   private overlay?: Overlay;
@@ -28,9 +36,15 @@ export class ArenaScene extends Phaser.Scene {
   private energy?: Phaser.Physics.Arcade.Group;
   private rareEnergy?: Phaser.Physics.Arcade.Group;
   private hazards?: Phaser.Physics.Arcade.Group;
+  private behaviorPickups?: Phaser.Physics.Arcade.Group;
   private obstacles?: Phaser.Physics.Arcade.StaticGroup;
   private lastDash: Record<string, number> = {};
   private dashState: Record<string, { direction: Phaser.Math.Vector2; until: number } | undefined> = {};
+  private hookTimers: Record<string, number> = {};
+  private activeHooks: Record<
+    string,
+    { target: Player; tether: Phaser.GameObjects.Line; expires: number } | undefined
+  > = {};
 
   constructor() {
     super('Arena');
@@ -41,6 +55,8 @@ export class ArenaScene extends Phaser.Scene {
     this.players = [];
     this.lastDash = {};
     this.dashState = {};
+    this.hookTimers = {};
+    this.activeHooks = {};
 
     this.createBackground();
     this.overlay = new Overlay();
@@ -60,7 +76,8 @@ export class ArenaScene extends Phaser.Scene {
       x: 200,
       y: 300,
       keys: this.createKeys(['W', 'S', 'A', 'D']),
-      dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT)
+      dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
+      hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E)
     }));
 
     this.players.push(this.createPlayer({
@@ -70,7 +87,8 @@ export class ArenaScene extends Phaser.Scene {
       x: 600,
       y: 300,
       keys: this.createKeys(['UP', 'DOWN', 'LEFT', 'RIGHT']),
-      dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER)
+      dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER),
+      hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P)
     }));
 
     this.obstacles = this.physics.add.staticGroup();
@@ -79,10 +97,12 @@ export class ArenaScene extends Phaser.Scene {
     this.energy = this.physics.add.group();
     this.rareEnergy = this.physics.add.group();
     this.hazards = this.physics.add.group();
+    this.behaviorPickups = this.physics.add.group();
 
     this.spawnEnergyOrbs();
     this.spawnRareEnergy();
     this.spawnHazards();
+    this.spawnBehaviorPickups();
 
     const playerShapes = this.players.map((p) => p.shape);
     if (this.obstacles) {
@@ -91,6 +111,7 @@ export class ArenaScene extends Phaser.Scene {
         this.physics.add.collider(this.hazards, this.obstacles);
       }
     }
+    this.physics.add.collider(playerShapes, playerShapes);
 
     this.physics.add.overlap(playerShapes, this.energy, (_playerShape, energy) => {
       const player = this.players.find((p) => p.shape === _playerShape);
@@ -126,10 +147,25 @@ export class ArenaScene extends Phaser.Scene {
       this.applyHazardPenalty(player);
       this.spawnHazards(1);
     });
+
+    this.physics.add.overlap(playerShapes, this.behaviorPickups, (_playerShape, pickup) => {
+      const player = this.players.find((p) => p.shape === _playerShape);
+      if (!player) return;
+      const item = pickup as Phaser.GameObjects.Shape;
+      const effect = item.getData('effect');
+      item.destroy();
+      if (effect === 'boost') {
+        this.applySpeedModifier(player, 1.5, 3500);
+      } else if (effect === 'slow') {
+        this.applySpeedModifier(player, 0.6, 3500);
+      }
+      this.spawnBehaviorPickups(1);
+    });
   }
 
   update(): void {
     this.players.forEach((player) => this.updatePlayerMovement(player));
+    this.updateHooks();
     this.overlay?.update(this.players.map((player) => this.toScoreState(player)));
   }
 
@@ -153,7 +189,7 @@ export class ArenaScene extends Phaser.Scene {
     if (right.isDown) velocity.x += 1;
 
     velocity.normalize();
-    body.setVelocity(velocity.x * PLAYER_SPEED, velocity.y * PLAYER_SPEED);
+    body.setVelocity(velocity.x * PLAYER_SPEED * player.speedMultiplier, velocity.y * PLAYER_SPEED * player.speedMultiplier);
 
     const dashReady = this.time.now - (this.lastDash[player.id] ?? 0) >= DASH_COOLDOWN;
     const hasInput = velocity.lengthSq() > 0;
@@ -163,6 +199,10 @@ export class ArenaScene extends Phaser.Scene {
       this.lastDash[player.id] = this.time.now;
       body.setVelocity(direction.x * DASH_SPEED, direction.y * DASH_SPEED);
       this.addDashBurst(player.shape.x, player.shape.y, player.color);
+    }
+
+    if (Phaser.Input.Keyboard.JustDown(player.hookKey)) {
+      this.attemptHook(player);
     }
   }
 
@@ -187,6 +227,7 @@ export class ArenaScene extends Phaser.Scene {
     y: number;
     keys: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key>;
     dash: Phaser.Input.Keyboard.Key;
+    hook: Phaser.Input.Keyboard.Key;
   }): Player {
     const shape = this.add.rectangle(config.x, config.y, 48, 48, config.color, 0.9);
     this.physics.add.existing(shape);
@@ -201,7 +242,9 @@ export class ArenaScene extends Phaser.Scene {
       body,
       score: 0,
       controls: config.keys,
-      dashKey: config.dash
+      dashKey: config.dash,
+      hookKey: config.hook,
+      speedMultiplier: 1
     };
   }
 
@@ -217,9 +260,9 @@ export class ArenaScene extends Phaser.Scene {
   private spawnEnergyOrbs(count = 5): void {
     if (!this.energy) return;
     for (let i = 0; i < count; i += 1) {
-      const x = Phaser.Math.Between(50, this.scale.width - 50);
-      const y = Phaser.Math.Between(50, this.scale.height - 50);
-      const orb = this.add.circle(x, y, 10, 0x2cb67d, 0.8);
+      const position = this.findSpawnPosition(12);
+      if (!position) continue;
+      const orb = this.add.circle(position.x, position.y, 10, 0x2cb67d, 0.8);
       this.physics.add.existing(orb);
       this.energy.add(orb);
     }
@@ -228,9 +271,9 @@ export class ArenaScene extends Phaser.Scene {
   private spawnRareEnergy(count = 1): void {
     if (!this.rareEnergy) return;
     for (let i = 0; i < count; i += 1) {
-      const x = Phaser.Math.Between(60, this.scale.width - 60);
-      const y = Phaser.Math.Between(60, this.scale.height - 60);
-      const orb = this.add.star(x, y, 5, 8, 14, 0xffd803, 0.9);
+      const position = this.findSpawnPosition(16);
+      if (!position) continue;
+      const orb = this.add.star(position.x, position.y, 5, 8, 14, 0xffd803, 0.9);
       this.physics.add.existing(orb);
       this.rareEnergy.add(orb);
     }
@@ -239,9 +282,9 @@ export class ArenaScene extends Phaser.Scene {
   private spawnHazards(count = 2): void {
     if (!this.hazards) return;
     for (let i = 0; i < count; i += 1) {
-      const x = Phaser.Math.Between(40, this.scale.width - 40);
-      const y = Phaser.Math.Between(40, this.scale.height - 40);
-      const orb = this.add.circle(x, y, 12, 0xff5470, 0.9);
+      const position = this.findSpawnPosition(16);
+      if (!position) continue;
+      const orb = this.add.circle(position.x, position.y, 12, 0xff5470, 0.9);
       this.physics.add.existing(orb);
       const body = orb.body as Phaser.Physics.Arcade.Body;
       body.setCircle(12);
@@ -249,6 +292,21 @@ export class ArenaScene extends Phaser.Scene {
       body.setBounce(1, 1);
       body.setCollideWorldBounds(true);
       this.hazards.add(orb);
+    }
+  }
+
+  private spawnBehaviorPickups(count = 2): void {
+    if (!this.behaviorPickups) return;
+    const effects: Array<'boost' | 'slow'> = ['boost', 'slow'];
+    for (let i = 0; i < count; i += 1) {
+      const position = this.findSpawnPosition(14);
+      if (!position) continue;
+      const effect = effects[(i + Phaser.Math.Between(0, effects.length - 1)) % effects.length];
+      const color = effect === 'boost' ? 0x00f0ff : 0xff006e;
+      const pickup = this.add.polygon(position.x, position.y, this.createRegularPolygonPoints(6, 16), color, 0.85);
+      pickup.setData('effect', effect);
+      this.physics.add.existing(pickup);
+      this.behaviorPickups.add(pickup);
     }
   }
 
@@ -262,6 +320,118 @@ export class ArenaScene extends Phaser.Scene {
       tint: color
     });
     this.time.delayedCall(300, () => particles.destroy());
+  }
+
+  private applySpeedModifier(player: Player, multiplier: number, duration: number): void {
+    player.speedMultiplier = multiplier;
+    player.speedResetTimer?.remove(false);
+    player.speedResetTimer = this.time.delayedCall(duration, () => {
+      player.speedMultiplier = 1;
+      player.speedResetTimer = undefined;
+    });
+  }
+
+  private attemptHook(player: Player): void {
+    if (this.time.now - (this.hookTimers[player.id] ?? 0) < HOOK_COOLDOWN) {
+      return;
+    }
+    const target = this.players.find((p) => p.id !== player.id);
+    if (!target) return;
+    const distance = Phaser.Math.Distance.Between(player.shape.x, player.shape.y, target.shape.x, target.shape.y);
+    if (distance > HOOK_RANGE) {
+      return;
+    }
+
+    this.activeHooks[player.id]?.tether.destroy();
+    const tether = this.add.line(
+      0,
+      0,
+      player.shape.x,
+      player.shape.y,
+      target.shape.x,
+      target.shape.y,
+      player.color,
+      0.75
+    );
+    tether.setLineWidth(2, 2);
+    this.activeHooks[player.id] = { target, tether, expires: this.time.now + HOOK_DURATION };
+    this.hookTimers[player.id] = this.time.now;
+  }
+
+  private updateHooks(): void {
+    Object.entries(this.activeHooks).forEach(([playerId, hook]) => {
+      if (!hook) return;
+      const shooter = this.players.find((p) => p.id === playerId);
+      if (!shooter) {
+        hook.tether.destroy();
+        this.activeHooks[playerId] = undefined;
+        return;
+      }
+      if (hook.expires <= this.time.now) {
+        hook.tether.destroy();
+        this.activeHooks[playerId] = undefined;
+        return;
+      }
+      hook.tether.setTo(shooter.shape.x, shooter.shape.y, hook.target.shape.x, hook.target.shape.y);
+      const pullVector = new Phaser.Math.Vector2(shooter.shape.x - hook.target.shape.x, shooter.shape.y - hook.target.shape.y);
+      if (pullVector.lengthSq() > 0) {
+        pullVector.normalize();
+        hook.target.body.setVelocity(pullVector.x * HOOK_PULL_SPEED, pullVector.y * HOOK_PULL_SPEED);
+      }
+    });
+  }
+
+  private findSpawnPosition(radius: number): Phaser.Math.Vector2 | undefined {
+    for (let i = 0; i < MAX_SPAWN_ATTEMPTS; i += 1) {
+      const x = Phaser.Math.Between(radius, this.scale.width - radius);
+      const y = Phaser.Math.Between(radius, this.scale.height - radius);
+      const circle = new Phaser.Geom.Circle(x, y, radius);
+      if (!this.circleOverlapsShapes(circle)) {
+        return new Phaser.Math.Vector2(x, y);
+      }
+    }
+    return undefined;
+  }
+
+  private circleOverlapsShapes(circle: Phaser.Geom.Circle): boolean {
+    const bounds = new Phaser.Geom.Rectangle(
+      circle.x - circle.radius,
+      circle.y - circle.radius,
+      circle.radius * 2,
+      circle.radius * 2
+    );
+    if (this.players.some((player) => Phaser.Geom.Intersects.RectangleToRectangle(bounds, player.shape.getBounds()))) {
+      return true;
+    }
+    const obstacleOverlap = (this.obstacles?.getChildren() ?? []).some((shape) =>
+      Phaser.Geom.Intersects.RectangleToRectangle(bounds, (shape as Phaser.GameObjects.Rectangle).getBounds())
+    );
+    if (obstacleOverlap) return true;
+
+    const overlapsGroup = (group?: Phaser.GameObjects.Group) =>
+      group?.getChildren().some((child) => {
+        const withBounds = child as Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.GetBounds;
+        if (!withBounds.getBounds) {
+          return false;
+        }
+        return Phaser.Geom.Intersects.RectangleToRectangle(bounds, withBounds.getBounds());
+      }) ?? false;
+
+    return (
+      overlapsGroup(this.energy) ||
+      overlapsGroup(this.rareEnergy) ||
+      overlapsGroup(this.hazards) ||
+      overlapsGroup(this.behaviorPickups)
+    );
+  }
+
+  private createRegularPolygonPoints(sides: number, radius: number): number[] {
+    const points: number[] = [];
+    for (let i = 0; i < sides; i += 1) {
+      const angle = (Math.PI * 2 * i) / sides;
+      points.push(Math.cos(angle) * radius, Math.sin(angle) * radius);
+    }
+    return points;
   }
 
   private toScoreState(player: Player): ScoreState {
@@ -309,5 +479,7 @@ export class ArenaScene extends Phaser.Scene {
 
   shutdown(): void {
     this.overlay?.destroy();
+    Object.values(this.activeHooks).forEach((hook) => hook?.tether.destroy());
+    this.activeHooks = {};
   }
 }
