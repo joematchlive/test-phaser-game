@@ -9,6 +9,7 @@ type Player = {
   shape: Phaser.GameObjects.Rectangle;
   body: Phaser.Physics.Arcade.Body;
   score: number;
+  wins: number;
   dashKey: Phaser.Input.Keyboard.Key;
   hookKey: Phaser.Input.Keyboard.Key;
   controls: {
@@ -20,6 +21,8 @@ type Player = {
   speedMultiplier: number;
   speedResetTimer?: Phaser.Time.TimerEvent;
   activeEffect?: PlayerEffect;
+  hookCharges: number;
+  maxHookCharges: number;
 };
 
 type PlayerEffect = {
@@ -37,9 +40,15 @@ const DASH_SPEED = 420;
 const DASH_COOLDOWN = 800;
 const DASH_DURATION = 180;
 const HOOK_RANGE = 280;
-const HOOK_DURATION = 500;
-const HOOK_PULL_SPEED = 340;
+const HOOK_DURATION = 320;
+const HOOK_PULL_STRENGTH = 140;
+const HOOK_PULL_DECAY = 0.7;
+const HOOK_BREAK_DISTANCE = 56;
+const SHOOTER_RECOIL_FACTOR = 0.82;
 const HOOK_COOLDOWN = 1800;
+const MAX_HOOK_CHARGES = 3;
+const ROPE_PICKUP_LIMIT = 1;
+const ROPE_RESPAWN_DELAY = 12000;
 const MAX_SPAWN_ATTEMPTS = 30;
 const CLOAK_DURATION = 4500;
 const DISRUPT_DURATION = 3500;
@@ -51,6 +60,7 @@ export class ArenaScene extends Phaser.Scene {
   private rareEnergy?: Phaser.Physics.Arcade.Group;
   private hazards?: Phaser.Physics.Arcade.Group;
   private behaviorPickups?: Phaser.Physics.Arcade.Group;
+  private ropePickups?: Phaser.Physics.Arcade.Group;
   private obstacles?: Phaser.Physics.Arcade.StaticGroup;
   private movingObstacles?: Phaser.Physics.Arcade.Group;
   private lastDash: Record<string, number> = {};
@@ -63,6 +73,8 @@ export class ArenaScene extends Phaser.Scene {
   private settings!: GameSettings;
   private level!: LevelSchema;
   private escapeKey?: Phaser.Input.Keyboard.Key;
+  private matchWins: Record<string, number> = {};
+  private roundOver = false;
 
   constructor() {
     super('Arena');
@@ -78,16 +90,21 @@ export class ArenaScene extends Phaser.Scene {
     this.dashState = {};
     this.hookTimers = {};
     this.activeHooks = {};
+    this.roundOver = false;
     // Reset group references so we don't access destroyed children during restart
     this.energy = undefined;
     this.rareEnergy = undefined;
     this.hazards = undefined;
     this.behaviorPickups = undefined;
+    this.ropePickups = undefined;
     this.obstacles = undefined;
     this.movingObstacles = undefined;
 
     this.createBackground();
-    this.overlay = new Overlay({ targetScore: this.settings.winningScore });
+    this.overlay = new Overlay({
+      targetScore: this.settings.winningScore,
+      negativeLossThreshold: this.settings.negativeLossThreshold
+    });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.overlay?.destroy();
       this.overlay = undefined;
@@ -132,11 +149,15 @@ export class ArenaScene extends Phaser.Scene {
 
     playerConfigs.forEach((config, index) => {
       const spawn = spawnPoints[index % spawnPoints.length] ?? { x: 400, y: 300 };
+      if (typeof this.matchWins[config.id] !== 'number') {
+        this.matchWins[config.id] = 0;
+      }
       this.players.push(
         this.createPlayer({
           ...config,
           x: spawn.x,
-          y: spawn.y
+          y: spawn.y,
+          wins: this.matchWins[config.id]
         })
       );
     });
@@ -151,11 +172,13 @@ export class ArenaScene extends Phaser.Scene {
     this.rareEnergy = this.physics.add.group();
     this.hazards = this.physics.add.group();
     this.behaviorPickups = this.physics.add.group();
+    this.ropePickups = this.physics.add.group();
 
     this.spawnEnergyOrbs(this.settings.energyCount);
     this.spawnRareEnergy(this.settings.rareEnergyCount);
     this.spawnHazards();
     this.spawnBehaviorPickups(this.settings.behaviorPickupCount);
+    this.spawnRopePickups(ROPE_PICKUP_LIMIT);
 
     const playerShapes = this.players.map((p) => p.shape);
     if (this.obstacles) {
@@ -182,9 +205,8 @@ export class ArenaScene extends Phaser.Scene {
 
       orb.destroy();
       player.score += 1;
-      if (player.score >= this.settings.winningScore) {
-        this.scene.restart();
-      } else {
+      this.evaluateScore(player);
+      if (!this.roundOver) {
         this.spawnEnergyOrbs(1);
       }
     });
@@ -195,7 +217,10 @@ export class ArenaScene extends Phaser.Scene {
       if (!player || !orb.active) return;
       orb.destroy();
       player.score += 3;
-      this.spawnRareEnergy(1);
+      this.evaluateScore(player);
+      if (!this.roundOver) {
+        this.spawnRareEnergy(1);
+      }
     });
 
     this.physics.add.overlap(playerShapes, this.hazards, (_playerShape, hazard) => {
@@ -203,9 +228,12 @@ export class ArenaScene extends Phaser.Scene {
       const orb = hazard as Phaser.GameObjects.Arc;
       if (!player || !orb.active) return;
       orb.destroy();
-      player.score = Math.max(0, player.score - 2);
+      player.score -= 2;
       this.applyHazardPenalty(player);
-      this.spawnHazards(1);
+      this.evaluateScore(player);
+      if (!this.roundOver) {
+        this.spawnHazards(1);
+      }
     });
 
     this.physics.add.overlap(playerShapes, this.behaviorPickups, (_playerShape, pickup) => {
@@ -232,6 +260,15 @@ export class ArenaScene extends Phaser.Scene {
       }
       this.spawnBehaviorPickups(1);
     });
+
+    this.physics.add.overlap(playerShapes, this.ropePickups, (_playerShape, pickup) => {
+      const player = this.players.find((p) => p.shape === _playerShape);
+      const rope = pickup as Phaser.GameObjects.Shape;
+      if (!player || !rope.active) return;
+      rope.destroy();
+      this.adjustHookCharges(player, 1);
+      this.time.delayedCall(ROPE_RESPAWN_DELAY, () => this.spawnRopePickups(1));
+    });
   }
 
   update(): void {
@@ -246,6 +283,11 @@ export class ArenaScene extends Phaser.Scene {
   private updatePlayerMovement(player: Player): void {
     const body = player.body;
     const { up, down, left, right } = player.controls;
+
+    if (this.roundOver) {
+      body.setVelocity(0, 0);
+      return;
+    }
 
     const dashInfo = this.dashState[player.id];
     if (dashInfo && dashInfo.until > this.time.now) {
@@ -302,6 +344,7 @@ export class ArenaScene extends Phaser.Scene {
     keys: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key>;
     dash: Phaser.Input.Keyboard.Key;
     hook: Phaser.Input.Keyboard.Key;
+    wins: number;
   }): Player {
     const shape = this.add.rectangle(config.x, config.y, 48, 48, config.color, 0.9);
     this.physics.add.existing(shape);
@@ -315,10 +358,13 @@ export class ArenaScene extends Phaser.Scene {
       shape,
       body,
       score: 0,
+      wins: config.wins,
       controls: config.keys,
       dashKey: config.dash,
       hookKey: config.hook,
-      speedMultiplier: 1
+      speedMultiplier: 1,
+      hookCharges: MAX_HOOK_CHARGES,
+      maxHookCharges: MAX_HOOK_CHARGES
     };
   }
 
@@ -398,6 +444,22 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  private spawnRopePickups(count?: number): void {
+    if (!this.ropePickups) return;
+    const amount = count ?? 1;
+    for (let i = 0; i < amount; i += 1) {
+      if (this.ropePickups.countActive(true) >= ROPE_PICKUP_LIMIT) {
+        break;
+      }
+      const position = this.findSpawnPosition(12);
+      if (!position) continue;
+      const pickup = this.add.star(position.x, position.y, 5, 6, 12, 0xffd803, 0.9);
+      pickup.setStrokeStyle(2, 0x0f0e17, 0.8);
+      this.physics.add.existing(pickup);
+      this.ropePickups.add(pickup);
+    }
+  }
+
   private addDashBurst(x: number, y: number, color: number): void {
     const particles = this.add.particles(x, y, undefined, {
       speed: { min: -100, max: 100 },
@@ -423,8 +485,9 @@ export class ArenaScene extends Phaser.Scene {
 
   private applyCloak(player: Player, duration: number): void {
     this.setPlayerEffect(player, 'cloak', duration, 0xffffff, { showAura: false });
-    player.shape.setAlpha(0.2);
-    player.shape.setStrokeStyle(2, 0xffffff, 0.5);
+    player.shape.setAlpha(0.05);
+    player.shape.setStrokeStyle(1, 0xffffff, 0.2);
+    player.shape.setBlendMode(Phaser.BlendModes.ADD);
     this.time.delayedCall(duration, () => {
       if (player.activeEffect?.type === 'cloak') {
         this.clearPlayerEffect(player);
@@ -450,6 +513,15 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  private adjustHookCharges(player: Player, delta: number): void {
+    const next = Phaser.Math.Clamp(player.hookCharges + delta, 0, player.maxHookCharges);
+    const gained = next > player.hookCharges;
+    player.hookCharges = next;
+    if (gained) {
+      this.addStatusPing(player.shape.x, player.shape.y, 0xffd803);
+    }
+  }
+
   private setPlayerEffect(
     player: Player,
     type: PlayerEffect['type'],
@@ -473,6 +545,7 @@ export class ArenaScene extends Phaser.Scene {
     if (player.activeEffect?.type === 'cloak') {
       player.shape.setAlpha(1);
       player.shape.setStrokeStyle();
+      player.shape.setBlendMode(Phaser.BlendModes.NORMAL);
     }
     player.activeEffect?.aura?.destroy();
     player.activeEffect = undefined;
@@ -492,7 +565,14 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private attemptHook(player: Player): void {
+    if (this.roundOver) {
+      return;
+    }
     if (this.time.now - (this.hookTimers[player.id] ?? 0) < HOOK_COOLDOWN) {
+      return;
+    }
+    if (player.hookCharges <= 0) {
+      this.addStatusPing(player.shape.x, player.shape.y, 0xff5470);
       return;
     }
     const target = this.players.find((p) => p.id !== player.id);
@@ -510,6 +590,7 @@ export class ArenaScene extends Phaser.Scene {
     tether.setTo(player.shape.x, player.shape.y, target.shape.x, target.shape.y);
     this.activeHooks[player.id] = { target, tether, expires: this.time.now + HOOK_DURATION };
     this.hookTimers[player.id] = this.time.now;
+    this.adjustHookCharges(player, -1);
   }
 
   private updateHooks(): void {
@@ -517,22 +598,38 @@ export class ArenaScene extends Phaser.Scene {
       if (!hook) return;
       const shooter = this.players.find((p) => p.id === playerId);
       if (!shooter) {
-        hook.tether.destroy();
-        this.activeHooks[playerId] = undefined;
+        this.releaseHook(playerId);
         return;
       }
-      if (hook.expires <= this.time.now) {
-        hook.tether.destroy();
-        this.activeHooks[playerId] = undefined;
+      if (hook.expires <= this.time.now || this.roundOver) {
+        this.releaseHook(playerId);
         return;
       }
       hook.tether.setTo(shooter.shape.x, shooter.shape.y, hook.target.shape.x, hook.target.shape.y);
       const pullVector = new Phaser.Math.Vector2(shooter.shape.x - hook.target.shape.x, shooter.shape.y - hook.target.shape.y);
+      const distance = pullVector.length();
+      if (distance < HOOK_BREAK_DISTANCE) {
+        this.releaseHook(playerId);
+        return;
+      }
       if (pullVector.lengthSq() > 0) {
-        pullVector.normalize();
-        hook.target.body.setVelocity(pullVector.x * HOOK_PULL_SPEED, pullVector.y * HOOK_PULL_SPEED);
+        const direction = pullVector.normalize();
+        const falloff = Phaser.Math.Clamp((hook.expires - this.time.now) / HOOK_DURATION, 0, 1);
+        const tug = Phaser.Math.Linear(HOOK_PULL_STRENGTH * 0.4, HOOK_PULL_STRENGTH, falloff);
+        const targetBody = hook.target.body;
+        const dampenedVelocity = new Phaser.Math.Vector2(targetBody.velocity.x, targetBody.velocity.y).scale(HOOK_PULL_DECAY);
+        const nextVelocity = dampenedVelocity.add(direction.scale(tug));
+        targetBody.setVelocity(nextVelocity.x, nextVelocity.y);
+        shooter.body.setVelocity(shooter.body.velocity.x * SHOOTER_RECOIL_FACTOR, shooter.body.velocity.y * SHOOTER_RECOIL_FACTOR);
       }
     });
+  }
+
+  private releaseHook(playerId: string): void {
+    const hook = this.activeHooks[playerId];
+    if (!hook) return;
+    hook.tether.destroy();
+    this.activeHooks[playerId] = undefined;
   }
 
   private findSpawnPosition(radius: number): Phaser.Math.Vector2 | undefined {
@@ -584,7 +681,8 @@ export class ArenaScene extends Phaser.Scene {
       overlapsGroup(this.energy) ||
       overlapsGroup(this.rareEnergy) ||
       overlapsGroup(this.hazards) ||
-      overlapsGroup(this.behaviorPickups)
+      overlapsGroup(this.behaviorPickups) ||
+      overlapsGroup(this.ropePickups)
     );
   }
 
@@ -654,7 +752,10 @@ export class ArenaScene extends Phaser.Scene {
       dashReady,
       dashPercent,
       goal: this.settings.winningScore,
-      effects
+      effects,
+      wins: player.wins,
+      hookCharges: player.hookCharges,
+      maxHookCharges: player.maxHookCharges
     };
   }
 
@@ -710,6 +811,41 @@ export class ArenaScene extends Phaser.Scene {
       repeat: 3,
       duration: 80
     });
+  }
+
+  private evaluateScore(player: Player): void {
+    if (this.roundOver) {
+      return;
+    }
+    if (player.score >= this.settings.winningScore) {
+      this.recordWin(player, 'score');
+      return;
+    }
+    if (player.score <= this.settings.negativeLossThreshold) {
+      const opponent = this.players.find((p) => p.id !== player.id);
+      if (opponent) {
+        this.recordWin(opponent, 'debt');
+      } else {
+        this.roundOver = true;
+        this.time.delayedCall(600, () => this.scene.restart());
+      }
+    }
+  }
+
+  private recordWin(winner: Player, reason: 'score' | 'debt'): void {
+    if (this.roundOver) {
+      return;
+    }
+    this.roundOver = true;
+    this.matchWins[winner.id] = (this.matchWins[winner.id] ?? 0) + 1;
+    winner.wins = this.matchWins[winner.id];
+    const flareColor = reason === 'score' ? 0x2cb67d : 0xff5470;
+    this.addStatusPing(winner.shape.x, winner.shape.y, flareColor);
+    Object.entries(this.activeHooks).forEach(([id, hook]) => {
+      hook?.tether.destroy();
+      this.activeHooks[id] = undefined;
+    });
+    this.time.delayedCall(800, () => this.scene.restart());
   }
 
   shutdown(): void {

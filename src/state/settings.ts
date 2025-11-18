@@ -18,6 +18,7 @@ export type GameSettings = {
   hazardCount: number;
   behaviorPickupCount: number;
   mode: GameMode;
+  negativeLossThreshold: number;
 };
 
 const parsedLevels: LevelSchema[] = Array.isArray(levels) ? (levels as LevelSchema[]) : [];
@@ -31,7 +32,8 @@ const defaultSettings: GameSettings = {
   rareEnergyCount: 1,
   hazardCount: 2,
   behaviorPickupCount: 2,
-  mode: 'classic'
+  mode: 'classic',
+  negativeLossThreshold: -3
 };
 
 const modeMetadata: Record<GameMode, { label: string; description: string }> = {
