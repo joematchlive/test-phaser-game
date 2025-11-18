@@ -78,6 +78,13 @@ export class ArenaScene extends Phaser.Scene {
     this.dashState = {};
     this.hookTimers = {};
     this.activeHooks = {};
+    // Reset group references so we don't access destroyed children during restart
+    this.energy = undefined;
+    this.rareEnergy = undefined;
+    this.hazards = undefined;
+    this.behaviorPickups = undefined;
+    this.obstacles = undefined;
+    this.movingObstacles = undefined;
 
     this.createBackground();
     this.overlay = new Overlay({ targetScore: this.settings.winningScore });
@@ -560,14 +567,18 @@ export class ArenaScene extends Phaser.Scene {
     );
     if (movingObstacleOverlap) return true;
 
-    const overlapsGroup = (group?: Phaser.GameObjects.Group) =>
-      group?.getChildren().some((child) => {
+    const overlapsGroup = (group?: Phaser.GameObjects.Group) => {
+      if (!group || !group.children) {
+        return false;
+      }
+      return group.getChildren().some((child) => {
         const withBounds = child as Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.GetBounds;
         if (!withBounds.getBounds) {
           return false;
         }
         return Phaser.Geom.Intersects.RectangleToRectangle(bounds, withBounds.getBounds());
-      }) ?? false;
+      });
+    };
 
     return (
       overlapsGroup(this.energy) ||
