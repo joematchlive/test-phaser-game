@@ -132,20 +132,66 @@ export class SettingsScene extends Phaser.Scene {
     tabButtons[0].setStyle({ backgroundColor: 'rgba(255,255,255,0.12)', color: '#fffffe' });
 
     let activeStepObjects: Phaser.GameObjects.GameObject[] = [];
+    let stepContainer: Phaser.GameObjects.Container | undefined;
+    let stepMask: Phaser.GameObjects.Rectangle | undefined;
+    let scrollY = 0;
+    let contentHeight = 0;
+
+    const viewportTop = 230;
+    const viewportHeight = 300;
+    const itemSpacing = 100;
+    const estimatedStepperHeight = 120;
+
+    const updateScroll = (delta: number) => {
+      if (!stepContainer) {
+        return;
+      }
+
+      if (contentHeight <= viewportHeight) {
+        scrollY = 0;
+      } else {
+        scrollY = Phaser.Math.Clamp(scrollY + delta, viewportHeight - contentHeight, 0);
+      }
+
+      stepContainer.setY(scrollY);
+    };
 
     const renderSection = () => {
       activeStepObjects.forEach((obj) => obj.destroy());
       activeStepObjects = [];
+      scrollY = 0;
+      stepContainer = undefined;
+      stepMask = undefined;
+
       const section = sections[activeSectionIndex];
-      let offsetY = 260;
+
+      stepContainer = this.add.container(0, 0);
+      stepMask = this.add.rectangle(this.scale.width / 2, viewportTop, 680, viewportHeight, 0x000000, 0);
+      stepMask.setOrigin(0.5, 0);
+      stepContainer.setMask(stepMask.createGeometryMask());
+      activeStepObjects.push(stepContainer, stepMask);
+
       section.steppers.forEach((stepper, index) => {
-        const y = offsetY + index * 110;
+        const y = viewportTop + index * itemSpacing;
         const created = this.createStepper(stepper, y);
-        activeStepObjects.push(...created);
+        stepContainer?.add(created);
       });
+
+      contentHeight = section.steppers.length
+        ? (section.steppers.length - 1) * itemSpacing + estimatedStepperHeight
+        : 0;
+
+      updateScroll(0);
     };
 
     renderSection();
+
+    this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: Phaser.GameObjects.GameObject[], _dx: number, dy: number) => {
+      updateScroll(-dy * 0.5);
+    });
+
+    this.input.keyboard?.on('keydown-UP', () => updateScroll(30));
+    this.input.keyboard?.on('keydown-DOWN', () => updateScroll(-30));
 
     this.createButton(this.scale.width / 2, this.scale.height - 80, 'Back to menu', () => {
       this.scene.start('Menu');
