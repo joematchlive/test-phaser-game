@@ -21,6 +21,10 @@ export type ScoreState = {
   role?: string;
   roleColor?: string;
   objective?: string;
+  currency?: {
+    balance: number;
+    earned?: number;
+  };
 };
 
 export type PowerState = {
@@ -186,6 +190,14 @@ export class Overlay {
       const hooks = document.createElement('span');
       hooks.innerHTML = `Hooks <strong>${score.hookCharges}/${score.maxHookCharges}</strong>`;
       meta.appendChild(hooks);
+      if (score.currency) {
+        const currency = document.createElement('span');
+        currency.className = 'scoreboard__currency';
+        currency.innerHTML = `Credits <strong>${score.currency.balance}</strong>${
+          score.currency.earned ? ` <em>(+${score.currency.earned})</em>` : ''
+        }`;
+        meta.appendChild(currency);
+      }
       row.appendChild(meta);
 
       const surface = document.createElement('span');
