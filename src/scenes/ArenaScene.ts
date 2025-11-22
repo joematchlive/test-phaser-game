@@ -8,7 +8,7 @@ type Player = {
   id: string;
   label: string;
   color: number;
-  shape: Phaser.GameObjects.Rectangle;
+  shape: Phaser.GameObjects.Arc;
   body: Phaser.Physics.Arcade.Body;
   facing: Phaser.Math.Vector2;
   score: number;
@@ -56,8 +56,8 @@ type PowerDefinition = {
   pickupColor: number;
 };
 
-const PLAYER_SPEED = 220;
-const DASH_SPEED = 420;
+const PLAYER_SPEED = 260;
+const DASH_SPEED = 500;
 const DASH_COOLDOWN = 800;
 const DASH_DURATION = 180;
 const HOOK_RANGE = 280;
@@ -532,7 +532,8 @@ export class ArenaScene extends Phaser.Scene {
       const direction = velocity.clone();
       this.dashState[player.id] = { direction, until: this.time.now + DASH_DURATION };
       this.lastDash[player.id] = this.time.now;
-      body.setVelocity(direction.x * DASH_SPEED, direction.y * DASH_SPEED);
+      const dashSpeed = DASH_SPEED * totalSpeedMultiplier;
+      body.setVelocity(direction.x * dashSpeed, direction.y * dashSpeed);
       this.addDashBurst(player.shape.x, player.shape.y, player.color);
     }
 
@@ -573,9 +574,11 @@ export class ArenaScene extends Phaser.Scene {
     roleSpeedMultiplier: number;
     maxHookCharges: number;
   }): Player {
-    const shape = this.add.rectangle(config.x, config.y, 48, 48, config.color, 0.9);
+    const radius = 18;
+    const shape = this.add.circle(config.x, config.y, radius, config.color, 0.9);
     this.physics.add.existing(shape);
     const body = shape.body as Phaser.Physics.Arcade.Body;
+    body.setCircle(radius);
     body.setCollideWorldBounds(true);
     body.pushable = false;
 
