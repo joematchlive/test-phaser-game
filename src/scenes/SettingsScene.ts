@@ -8,7 +8,7 @@ import {
   setMode,
   updateSettings
 } from '../state/settings';
-import type { GameMode } from '../state/settings';
+import type { GameMode, GameSettings } from '../state/settings';
 
 type StepperConfig = {
   label: string;
@@ -85,6 +85,16 @@ export class SettingsScene extends Phaser.Scene {
               return seconds > 0 ? `${seconds}s` : 'Off';
             },
             description: () => 'Pursuit: survival timer for collectors. Set to 0 to disable the clock.'
+          },
+          {
+            label: 'Boundary behavior',
+            adjust: (delta) => this.cycleBoundaryBehavior(delta > 0 ? 1 : -1),
+            getValue: () =>
+              getActiveSettings().boundaryBehavior === 'collide' ? 'Collide' : 'Wrap through',
+            description: () =>
+              getActiveSettings().boundaryBehavior === 'collide'
+                ? 'Bounce off the arena edges for crisp wall play.'
+                : 'Slip past the arena edges and re-enter from the opposite side.'
           }
         ]
       },
@@ -354,6 +364,14 @@ export class SettingsScene extends Phaser.Scene {
     const next = modes[(index + direction + modes.length) % modes.length];
     setMode(next);
     this.events.emit('settings:mode-updated');
+  }
+
+  private cycleBoundaryBehavior(direction: 1 | -1): void {
+    const behaviors: Array<GameSettings['boundaryBehavior']> = ['collide', 'wrap'];
+    const current = getActiveSettings().boundaryBehavior;
+    const index = behaviors.indexOf(current);
+    const next = behaviors[(index + direction + behaviors.length) % behaviors.length];
+    updateSettings({ boundaryBehavior: next });
   }
 
 }
