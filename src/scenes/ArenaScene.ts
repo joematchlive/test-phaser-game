@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { GameSettings, SurfaceSchema, getActiveSettings, getLevelById, getModeMetadata, LevelSchema } from '../state/settings';
+import { awardCurrency, getCurrency, pullQueuedUpgrades, resetRecentEarnings, UpgradeId } from '../state/currency';
 import { OVERLAY_POWER_EVENT, Overlay, ScoreState } from '../ui/overlay';
+import { UpgradeModal } from '../ui/upgradeModal';
 
 type PlayerRole = 'collector' | 'chaser';
 
@@ -124,6 +126,8 @@ export class ArenaScene extends Phaser.Scene {
   private tagCooldowns: Record<string, number> = {};
   private modeTimer?: Phaser.Time.TimerEvent;
   private modeTimerExpiresAt?: number;
+  private lastRoundEarnings: Record<string, number> = {};
+  private upgradeModal?: UpgradeModal;
 
   constructor() {
     super('Arena');
@@ -132,6 +136,8 @@ export class ArenaScene extends Phaser.Scene {
   create(): void {
     this.settings = getActiveSettings();
     this.level = getLevelById(this.settings.levelId);
+    resetRecentEarnings();
+    this.lastRoundEarnings = {};
 
     // Ensure the scene restarts from a clean state by clearing player and dash tracking
     this.players = [];
@@ -199,6 +205,8 @@ export class ArenaScene extends Phaser.Scene {
       this.overlay = undefined;
       this.escapeKey?.destroy();
       this.escapeKey = undefined;
+      this.upgradeModal?.destroy();
+      this.upgradeModal = undefined;
       if (typeof window !== 'undefined' && this.overlayPowerHandler) {
         window.removeEventListener(OVERLAY_POWER_EVENT, this.overlayPowerHandler as EventListener);
         this.overlayPowerHandler = undefined;
@@ -209,6 +217,8 @@ export class ArenaScene extends Phaser.Scene {
       this.overlay = undefined;
       this.escapeKey?.destroy();
       this.escapeKey = undefined;
+      this.upgradeModal?.destroy();
+      this.upgradeModal = undefined;
       if (typeof window !== 'undefined' && this.overlayPowerHandler) {
         window.removeEventListener(OVERLAY_POWER_EVENT, this.overlayPowerHandler as EventListener);
         this.overlayPowerHandler = undefined;
@@ -606,7 +616,7 @@ export class ArenaScene extends Phaser.Scene {
     body.setCollideWorldBounds(true);
     body.pushable = false;
 
-    return {
+    const player: Player = {
       id: config.id,
       label: config.label,
       color: config.color,
@@ -627,6 +637,32 @@ export class ArenaScene extends Phaser.Scene {
       hookCharges: config.maxHookCharges,
       maxHookCharges: config.maxHookCharges
     };
+
+    this.applyQueuedUpgrades(player);
+
+    return player;
+  }
+
+  private applyQueuedUpgrades(player: Player): void {
+    const queued = pullQueuedUpgrades(player.id);
+    queued.forEach((upgradeId) => this.applyUpgradeEffect(player, upgradeId));
+  }
+
+  private applyUpgradeEffect(player: Player, upgradeId: UpgradeId): void {
+    switch (upgradeId) {
+      case 'afterburner':
+        player.speedMultiplier += 0.1;
+        break;
+      case 'reserve-core':
+        player.score += 1;
+        break;
+      case 'hook-stock':
+        player.maxHookCharges += 1;
+        player.hookCharges = Math.min(player.maxHookCharges, player.hookCharges + 1);
+        break;
+      default:
+        break;
+    }
   }
 
   private createKeys(keys: [string, string, string, string]): Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key> {
@@ -1077,6 +1113,7 @@ export class ArenaScene extends Phaser.Scene {
     const remaining = Math.max(0, DASH_COOLDOWN - elapsed);
     const dashReady = remaining <= 0;
     const dashPercent = dashReady ? 1 : 1 - remaining / DASH_COOLDOWN;
+    const currency = getCurrency(player.id);
 
     const pursuitGoal = this.isPursuitMode() && player.role === 'chaser' ? this.settings.chaserTagGoal : undefined;
     const goal = pursuitGoal ?? this.settings.winningScore;
@@ -1120,6 +1157,10 @@ export class ArenaScene extends Phaser.Scene {
       role: this.isPursuitMode() ? (player.role === 'chaser' ? 'Chaser' : 'Collector') : undefined,
       roleColor: this.isPursuitMode() ? roleColor : undefined,
       objective,
+      currency: {
+        balance: currency.balance,
+        earned: currency.recentEarnings ?? 0
+      },
       power: player.carriedPower
         ? {
             label: POWER_DEFINITIONS[player.carriedPower].label,
@@ -1266,8 +1307,7 @@ export class ArenaScene extends Phaser.Scene {
       if (opponent) {
         this.recordWin(opponent, 'debt');
       } else {
-        this.roundOver = true;
-        this.time.delayedCall(600, () => this.scene.restart());
+        this.recordWin(player, 'debt');
       }
     }
   }
@@ -1289,7 +1329,48 @@ export class ArenaScene extends Phaser.Scene {
       hook?.tether.destroy();
       this.activeHooks[id] = undefined;
     });
-    this.time.delayedCall(800, () => this.scene.restart());
+    this.grantRoundCurrency(winner, reason);
+    this.launchUpgradeIntermission();
+  }
+
+  private grantRoundCurrency(winner: Player, reason: 'score' | 'debt' | 'tag' | 'timer'): void {
+    const winBonus =
+      reason === 'tag' ? 3 : reason === 'score' ? 2 : reason === 'timer' ? 1 : 1;
+    this.players.forEach((player) => {
+      const base = Math.max(1, Math.round(Math.max(player.score, 0) * 0.5));
+      const bonus = player.id === winner.id ? winBonus : 1;
+      const total = Math.max(1, base + bonus);
+      awardCurrency(player.id, total);
+      this.lastRoundEarnings[player.id] = total;
+    });
+  }
+
+  private launchUpgradeIntermission(): void {
+    if (this.upgradeModal || typeof window === 'undefined') {
+      this.time.delayedCall(800, () => this.scene.restart());
+      return;
+    }
+
+    const players = this.players.map((player) => ({
+      id: player.id,
+      label: player.label,
+      color: `#${player.color.toString(16).padStart(6, '0')}`,
+      currency: getCurrency(player.id),
+      roundEarnings: this.lastRoundEarnings[player.id] ?? 0
+    }));
+
+    this.upgradeModal = new UpgradeModal({
+      players,
+      onSpend: () =>
+        this.overlay?.update(this.players.map((p) => this.toScoreState(p)), {
+          timerRemainingMs: this.getTimerRemaining()
+        })
+    });
+
+    this.upgradeModal.open().then(() => {
+      this.upgradeModal = undefined;
+      this.scene.restart();
+    });
   }
 
   shutdown(): void {
