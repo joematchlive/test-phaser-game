@@ -370,6 +370,9 @@ export class ArenaScene extends Phaser.Scene {
       const player = this.players.find((p) => p.shape === _playerShape);
       const orb = hazard as Phaser.GameObjects.Arc;
       if (!player || !orb.active) return;
+      if (this.isPlayerCloaked(player)) {
+        return;
+      }
       orb.destroy();
       if (this.isPursuitMode() && player.role !== 'collector') {
         this.applyHazardPenalty(player);
@@ -391,6 +394,9 @@ export class ArenaScene extends Phaser.Scene {
       if (!player) return;
       const item = pickup as Phaser.GameObjects.Shape;
       const effect = (item.getData('effect') as BehaviorEffect | undefined) ?? 'boost';
+      if (this.isPlayerCloaked(player) && (effect === 'slow' || effect === 'disrupt')) {
+        return;
+      }
       item.destroy();
       switch (effect) {
         case 'boost':
@@ -827,6 +833,10 @@ export class ArenaScene extends Phaser.Scene {
       player.speedResetTimer = undefined;
       this.clearPlayerEffect(player);
     });
+  }
+
+  private isPlayerCloaked(player: Player): boolean {
+    return player.activeEffect?.type === 'cloak';
   }
 
   private applyCloak(player: Player, duration: number): void {
