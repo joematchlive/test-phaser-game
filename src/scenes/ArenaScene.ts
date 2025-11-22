@@ -81,6 +81,9 @@ const GLUE_SIZE = 140;
 const TELEPORT_PICKUP_LIMIT = 2;
 const TELEPORT_RESPAWN_DELAY = 9000;
 const TELEPORT_MIN_DISTANCE = 140;
+const SKULL_PICKUP_LIMIT = 2;
+
+const SKULL_RESPAWN_DELAY = 11000;
 
 const POWER_DEFINITIONS: Record<PlayerPowerType, PowerDefinition> = {
   glue: {
@@ -100,6 +103,7 @@ export class ArenaScene extends Phaser.Scene {
   private ropePickups?: Phaser.Physics.Arcade.Group;
   private powerPickups?: Phaser.Physics.Arcade.Group;
   private teleportPickups?: Phaser.Physics.Arcade.Group;
+  private skullPickups?: Phaser.Physics.Arcade.Group;
   private obstacles?: Phaser.Physics.Arcade.StaticGroup;
   private movingObstacles?: Phaser.Physics.Arcade.Group;
   private lastDash: Record<string, number> = {};
@@ -150,6 +154,7 @@ export class ArenaScene extends Phaser.Scene {
     this.destroyGroup(this.obstacles);
     this.destroyGroup(this.movingObstacles);
     this.destroyGroup(this.teleportPickups);
+    this.destroyGroup(this.skullPickups);
     this.energy = undefined;
     this.rareEnergy = undefined;
     this.hazards = undefined;
@@ -159,6 +164,7 @@ export class ArenaScene extends Phaser.Scene {
     this.movingObstacles = undefined;
     this.powerPickups = undefined;
     this.teleportPickups = undefined;
+    this.skullPickups = undefined;
     this.surfaceZones.forEach((zone) => zone.shape.destroy());
     this.surfaceZones = [];
 
@@ -295,6 +301,7 @@ export class ArenaScene extends Phaser.Scene {
     this.ropePickups = this.physics.add.group();
     this.powerPickups = this.physics.add.group();
     this.teleportPickups = this.physics.add.group();
+    this.skullPickups = this.physics.add.group();
 
     this.spawnEnergyOrbs(this.settings.energyCount);
     this.spawnRareEnergy(this.settings.rareEnergyCount);
@@ -303,6 +310,7 @@ export class ArenaScene extends Phaser.Scene {
     this.spawnRopePickups(ROPE_PICKUP_LIMIT);
     this.spawnPowerPickups(POWER_PICKUP_LIMIT);
     this.spawnTeleportPickups(TELEPORT_PICKUP_LIMIT);
+    this.spawnSkullPickups(SKULL_PICKUP_LIMIT);
 
     const playerShapes = this.players.map((p) => p.shape);
     if (this.obstacles) {
@@ -435,6 +443,22 @@ export class ArenaScene extends Phaser.Scene {
       this.teleportPlayer(player);
       if (!this.roundOver) {
         this.time.delayedCall(TELEPORT_RESPAWN_DELAY, () => this.spawnTeleportPickups(1));
+      }
+    });
+
+    this.physics.add.overlap(playerShapes, this.skullPickups!, (_playerShape, pickup) => {
+      const player = this.players.find((p) => p.shape === _playerShape);
+      const shard = pickup as Phaser.GameObjects.Shape;
+      if (!player || !shard.active || this.roundOver) {
+        return;
+      }
+      shard.destroy();
+      const opponent = this.players.find((p) => p.id !== player.id);
+      if (opponent) {
+        this.recordWin(opponent, 'debt');
+      }
+      if (!this.roundOver) {
+        this.time.delayedCall(SKULL_RESPAWN_DELAY, () => this.spawnSkullPickups(1));
       }
     });
 
@@ -728,6 +752,22 @@ export class ArenaScene extends Phaser.Scene {
       pickup.setStrokeStyle(2, 0xffffff, 0.7);
       this.physics.add.existing(pickup);
       this.teleportPickups.add(pickup);
+    }
+  }
+
+  private spawnSkullPickups(count?: number): void {
+    if (!this.skullPickups) return;
+    const amount = count ?? 1;
+    for (let i = 0; i < amount; i += 1) {
+      if (this.skullPickups.countActive(true) >= SKULL_PICKUP_LIMIT) {
+        break;
+      }
+      const position = this.findSpawnPosition(16);
+      if (!position) continue;
+      const pickup = this.add.polygon(position.x, position.y, this.createRegularPolygonPoints(6, 14), 0x16161a, 0.92);
+      pickup.setStrokeStyle(2, 0xff5470, 0.9);
+      this.physics.add.existing(pickup);
+      this.skullPickups.add(pickup);
     }
   }
 
