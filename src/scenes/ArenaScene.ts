@@ -488,6 +488,7 @@ export class ArenaScene extends Phaser.Scene {
     this.players.forEach((player) => {
       this.updatePlayerSurface(player);
       this.updatePlayerMovement(player);
+      this.applyBoundaryBehavior(player);
       this.updateEffectAura(player);
     });
     this.updateHooks();
@@ -586,6 +587,35 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  private applyBoundaryBehavior(player: Player): void {
+    if (this.settings.boundaryBehavior === 'collide') {
+      player.body.setCollideWorldBounds(true);
+      return;
+    }
+
+    player.body.setCollideWorldBounds(false);
+    const radius = player.body.halfWidth ?? 18;
+    const width = this.scale.width;
+    const height = this.scale.height;
+    const leftLimit = -radius;
+    const rightLimit = width + radius;
+    const topLimit = -radius;
+    const bottomLimit = height + radius;
+
+    let x = player.shape.x;
+    let y = player.shape.y;
+
+    if (x < leftLimit) x = rightLimit;
+    else if (x > rightLimit) x = leftLimit;
+
+    if (y < topLimit) y = bottomLimit;
+    else if (y > bottomLimit) y = topLimit;
+
+    if (x !== player.shape.x || y !== player.shape.y) {
+      player.shape.setPosition(x, y);
+    }
+  }
+
   private createBackground(): void {
     const g = this.add.graphics({ fillStyle: { color: 0x242629 } });
     g.fillRect(0, 0, this.scale.width, this.scale.height);
@@ -619,7 +649,7 @@ export class ArenaScene extends Phaser.Scene {
     this.physics.add.existing(shape);
     const body = shape.body as Phaser.Physics.Arcade.Body;
     body.setCircle(radius);
-    body.setCollideWorldBounds(true);
+    body.setCollideWorldBounds(this.settings.boundaryBehavior === 'collide');
     body.pushable = false;
 
     const player: Player = {

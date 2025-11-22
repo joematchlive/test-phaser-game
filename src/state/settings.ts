@@ -39,6 +39,7 @@ export type GameSettings = {
   negativeLossThreshold: number;
   chaserTagGoal: number;
   modeTimerSeconds: number;
+  boundaryBehavior: 'collide' | 'wrap';
 };
 
 const parsedLevels: LevelSchema[] = Array.isArray(levels) ? (levels as LevelSchema[]) : [];
@@ -55,7 +56,8 @@ const defaultSettings: GameSettings = {
   mode: 'classic',
   negativeLossThreshold: -3,
   chaserTagGoal: 3,
-  modeTimerSeconds: 0
+  modeTimerSeconds: 0,
+  boundaryBehavior: 'collide'
 };
 
 const modeMetadata: Record<GameMode, ModeMetadata> = {
@@ -70,7 +72,8 @@ const modeMetadata: Record<GameMode, ModeMetadata> = {
       rareEnergyCount: 1,
       behaviorPickupCount: 2,
       chaserTagGoal: 3,
-      modeTimerSeconds: 0
+      modeTimerSeconds: 0,
+      boundaryBehavior: 'collide'
     }
   },
   minefield: {
@@ -84,7 +87,8 @@ const modeMetadata: Record<GameMode, ModeMetadata> = {
       behaviorPickupCount: 2,
       negativeLossThreshold: -3,
       chaserTagGoal: 3,
-      modeTimerSeconds: 0
+      modeTimerSeconds: 0,
+      boundaryBehavior: 'collide'
     }
   },
   pursuit: {
@@ -99,7 +103,8 @@ const modeMetadata: Record<GameMode, ModeMetadata> = {
       hazardCount: 1,
       behaviorPickupCount: 2,
       negativeLossThreshold: -4,
-      modeTimerSeconds: 120
+      modeTimerSeconds: 120,
+      boundaryBehavior: 'collide'
     }
   }
 };
