@@ -318,10 +318,13 @@ export class ArenaScene extends Phaser.Scene {
         this.physics.add.collider(this.hazards, this.movingObstacles);
       }
     }
-    this.physics.add.collider(playerShapes, playerShapes);
-    if (pursuitMode) {
-      this.physics.add.overlap(playerShapes, playerShapes, this.handleTagCollision, undefined, this);
-    }
+    this.physics.add.collider(
+      playerShapes,
+      playerShapes,
+      pursuitMode ? this.handleTagCollision : undefined,
+      undefined,
+      this
+    );
 
     this.physics.add.overlap(playerShapes, this.energy, (_playerShape, energy) => {
       const player = this.players.find((p) => p.shape === _playerShape);
