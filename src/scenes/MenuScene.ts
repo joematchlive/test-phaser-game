@@ -64,12 +64,18 @@ export class MenuScene extends Phaser.Scene {
     );
     modeInfo.setOrigin(0.5);
 
-    const hint = this.add.text(this.scale.width / 2, 560, 'Change arena layouts in Settings, press ESC anytime to come back.', {
-      fontSize: '14px',
-      fontFamily: 'Space Mono, monospace',
-      color: '#fffffe',
-      align: 'center'
-    });
+    const hint = this.add.text(
+      this.scale.width / 2,
+      560,
+      'Change arenas or modes in Settings (Pursuit splits Collector vs. Chaser goals). Press ESC anytime to return.',
+      {
+        fontSize: '14px',
+        fontFamily: 'Space Mono, monospace',
+        color: '#fffffe',
+        align: 'center',
+        wordWrap: { width: 620 }
+      }
+    );
     hint.setOrigin(0.5);
   }
 

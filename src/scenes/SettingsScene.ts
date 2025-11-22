@@ -1,5 +1,13 @@
 import Phaser from 'phaser';
-import { clampSetting, cycleLevel, getActiveSettings, getLevelById, getModeMetadata, updateSettings } from '../state/settings';
+import {
+  clampSetting,
+  cycleLevel,
+  getActiveSettings,
+  getLevelById,
+  getModeMetadata,
+  setMode,
+  updateSettings
+} from '../state/settings';
 import type { GameMode } from '../state/settings';
 
 type StepperConfig = {
@@ -56,6 +64,27 @@ export class SettingsScene extends Phaser.Scene {
             adjust: (delta) => this.cycleMode(delta > 0 ? 1 : -1),
             getValue: () => getModeMetadata(getActiveSettings().mode).label,
             description: () => getModeMetadata(getActiveSettings().mode).description
+          },
+          {
+            label: 'Chaser tags to win',
+            adjust: (delta) => {
+              const next = Phaser.Math.Clamp(getActiveSettings().chaserTagGoal + delta, 1, 8);
+              updateSettings({ chaserTagGoal: next });
+            },
+            getValue: () => `${getActiveSettings().chaserTagGoal} tags`,
+            description: () => 'Pursuit: how many clean tags the Chaser needs.'
+          },
+          {
+            label: 'Mode timer',
+            adjust: (delta) => {
+              const next = Phaser.Math.Clamp(getActiveSettings().modeTimerSeconds + delta * 15, 0, 240);
+              updateSettings({ modeTimerSeconds: next });
+            },
+            getValue: () => {
+              const seconds = getActiveSettings().modeTimerSeconds;
+              return seconds > 0 ? `${seconds}s` : 'Off';
+            },
+            description: () => 'Pursuit: survival timer for collectors. Set to 0 to disable the clock.'
           }
         ]
       },
@@ -186,6 +215,8 @@ export class SettingsScene extends Phaser.Scene {
 
     renderSection();
 
+    this.events.on('settings:mode-updated', () => renderSection());
+
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: Phaser.GameObjects.GameObject[], _dx: number, dy: number) => {
       updateScroll(-dy * 0.5);
     });
@@ -314,11 +345,12 @@ export class SettingsScene extends Phaser.Scene {
   }
 
   private cycleMode(direction: 1 | -1): void {
-    const modes: GameMode[] = ['classic', 'minefield'];
+    const modes: GameMode[] = ['classic', 'minefield', 'pursuit'];
     const current = getActiveSettings().mode;
     const index = modes.indexOf(current);
     const next = modes[(index + direction + modes.length) % modes.length];
-    updateSettings({ mode: next });
+    setMode(next);
+    this.events.emit('settings:mode-updated');
   }
 
 }

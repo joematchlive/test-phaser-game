@@ -34,6 +34,72 @@ canvas {
   min-width: 180px;
 }
 
+.mode-summary {
+  position: absolute;
+  top: 16px;
+  left: 220px;
+  padding: 10px 14px;
+  min-width: 260px;
+  max-width: 340px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fffffe;
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.mode-summary__title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 6px 0;
+  color: #2cb67d;
+  letter-spacing: 0.5px;
+}
+
+.mode-summary__description {
+  margin: 0 0 8px 0;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.mode-summary__timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mode-summary__timer strong {
+  letter-spacing: 0.04em;
+}
+
+.mode-summary__roles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mode-summary__role {
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 4px solid var(--role-color, #7f5af0);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.mode-summary__role strong {
+  display: block;
+  margin-bottom: 4px;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+}
+
 .scoreboard__row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -50,8 +116,38 @@ canvas {
   font-weight: 600;
 }
 
+.scoreboard__header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scoreboard__role {
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-left: 4px solid var(--role-color, #2cb67d);
+  color: rgba(255, 255, 255, 0.9);
+}
+
 .scoreboard__value {
   font-variant-numeric: tabular-nums;
+}
+
+.scoreboard__objective {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 4px 8px;
+  border-radius: 8px;
+  border-left: 3px solid rgba(44, 182, 125, 0.6);
 }
 
 .scoreboard__meta {
@@ -218,4 +314,8 @@ canvas {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
+}
+
+.instruction-panel__mode {
+  color: #ff8906;
 }

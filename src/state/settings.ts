@@ -20,7 +20,13 @@ export type LevelSchema = {
   surfaces?: SurfaceSchema[];
 };
 
-export type GameMode = 'classic' | 'minefield';
+export type GameMode = 'classic' | 'minefield' | 'pursuit';
+
+type ModeMetadata = {
+  label: string;
+  description: string;
+  defaults?: Partial<GameSettings>;
+};
 
 export type GameSettings = {
   winningScore: number;
@@ -31,6 +37,8 @@ export type GameSettings = {
   behaviorPickupCount: number;
   mode: GameMode;
   negativeLossThreshold: number;
+  chaserTagGoal: number;
+  modeTimerSeconds: number;
 };
 
 const parsedLevels: LevelSchema[] = Array.isArray(levels) ? (levels as LevelSchema[]) : [];
@@ -45,17 +53,54 @@ const defaultSettings: GameSettings = {
   hazardCount: 2,
   behaviorPickupCount: 2,
   mode: 'classic',
-  negativeLossThreshold: -3
+  negativeLossThreshold: -3,
+  chaserTagGoal: 3,
+  modeTimerSeconds: 0
 };
 
-const modeMetadata: Record<GameMode, { label: string; description: string }> = {
+const modeMetadata: Record<GameMode, ModeMetadata> = {
   classic: {
     label: 'Classic Duel',
-    description: 'Balanced spread of pickups, light hazards, and plenty of room to kite your rival.'
+    description: 'Balanced spread of pickups, light hazards, and plenty of room to kite your rival.',
+    defaults: {
+      winningScore: 10,
+      negativeLossThreshold: -3,
+      hazardCount: 2,
+      energyCount: 6,
+      rareEnergyCount: 1,
+      behaviorPickupCount: 2,
+      chaserTagGoal: 3,
+      modeTimerSeconds: 0
+    }
   },
   minefield: {
     label: 'Minefield Rush',
-    description: 'Hazards flood the arena and move faster—keep dodging while you collect energy.'
+    description: 'Hazards flood the arena and move faster—keep dodging while you collect energy.',
+    defaults: {
+      hazardCount: 4,
+      energyCount: 6,
+      winningScore: 10,
+      rareEnergyCount: 1,
+      behaviorPickupCount: 2,
+      negativeLossThreshold: -3,
+      chaserTagGoal: 3,
+      modeTimerSeconds: 0
+    }
+  },
+  pursuit: {
+    label: 'Pursuit Protocol',
+    description:
+      'One pilot becomes the Chaser while the other collects energy. Tag the collector before they hit their quota.',
+    defaults: {
+      winningScore: 12,
+      chaserTagGoal: 4,
+      energyCount: 7,
+      rareEnergyCount: 2,
+      hazardCount: 1,
+      behaviorPickupCount: 2,
+      negativeLossThreshold: -4,
+      modeTimerSeconds: 120
+    }
   }
 };
 
@@ -86,6 +131,11 @@ export function getActiveSettings(): GameSettings {
 
 export function updateSettings(patch: Partial<GameSettings>): void {
   activeSettings = { ...activeSettings, ...patch };
+}
+
+export function setMode(mode: GameMode): void {
+  const defaults = modeMetadata[mode]?.defaults ?? {};
+  activeSettings = { ...activeSettings, ...defaults, mode };
 }
 
 export function cycleLevel(direction: 1 | -1): void {
