@@ -18,6 +18,9 @@ export type ScoreState = {
   maxHookCharges: number;
   surfaceLabel?: string;
   power?: PowerState;
+  role?: string;
+  roleColor?: string;
+  objective?: string;
 };
 
 export type PowerState = {
@@ -31,17 +34,63 @@ export const OVERLAY_POWER_EVENT = 'overlay:power-activate';
 type OverlayOptions = {
   targetScore: number;
   negativeLossThreshold?: number;
+  modeLabel?: string;
+  modeDescription?: string;
+  roleDescriptors?: Array<{ id: string; label: string; detail: string; color: string }>;
+  timerSeconds?: number;
+};
+
+type OverlayUpdateContext = {
+  timerRemainingMs?: number;
 };
 
 export class Overlay {
   private scoreboard: HTMLDivElement;
+  private modeSummary: HTMLDivElement;
   private instructionPanel: HTMLDivElement;
   private instructionToggle: HTMLButtonElement;
+  private timerLabel?: HTMLSpanElement;
 
   constructor(options?: OverlayOptions) {
-    document.querySelectorAll('.scoreboard, .instruction-panel, .instruction-toggle').forEach((element) =>
+    document.querySelectorAll('.scoreboard, .instruction-panel, .instruction-toggle, .mode-summary').forEach((element) =>
       element.remove()
     );
+
+    this.modeSummary = document.createElement('div');
+    this.modeSummary.className = 'mode-summary';
+    const modeTitle = document.createElement('div');
+    modeTitle.className = 'mode-summary__title';
+    modeTitle.textContent = options?.modeLabel ?? 'Arena Briefing';
+    this.modeSummary.appendChild(modeTitle);
+
+    const modeDescription = document.createElement('p');
+    modeDescription.className = 'mode-summary__description';
+    modeDescription.textContent =
+      options?.modeDescription ?? 'Race to the target score by scooping energy while dodging hazards.';
+    this.modeSummary.appendChild(modeDescription);
+
+    if (options?.timerSeconds && options.timerSeconds > 0) {
+      const timer = document.createElement('div');
+      timer.className = 'mode-summary__timer';
+      timer.innerHTML = `<strong>Timer</strong> <span>${this.formatTimer(options.timerSeconds * 1000)}</span>`;
+      this.timerLabel = timer.querySelector('span') ?? undefined;
+      this.modeSummary.appendChild(timer);
+    }
+
+    if (options?.roleDescriptors?.length) {
+      const roles = document.createElement('div');
+      roles.className = 'mode-summary__roles';
+      options.roleDescriptors.forEach((role) => {
+        const badge = document.createElement('div');
+        badge.className = 'mode-summary__role';
+        badge.style.setProperty('--role-color', role.color);
+        badge.innerHTML = `<strong>${role.label}</strong><span>${role.detail}</span>`;
+        roles.appendChild(badge);
+      });
+      this.modeSummary.appendChild(roles);
+    }
+
+    document.body.appendChild(this.modeSummary);
 
     this.scoreboard = document.createElement('div');
     this.scoreboard.className = 'scoreboard';
@@ -50,6 +99,7 @@ export class Overlay {
     this.instructionPanel = document.createElement('div');
     this.instructionPanel.className = 'instruction-panel';
     const targetScore = options?.targetScore ?? 10;
+    const modeLine = options?.modeDescription ? `<li class="instruction-panel__mode">${options.modeDescription}</li>` : '';
     const debtLine =
       options?.negativeLossThreshold !== undefined
         ? `<li>Debt matters: hitting ${options.negativeLossThreshold} puts you out immediately. Adjust the floor in Settings.</li>`
@@ -67,6 +117,7 @@ export class Overlay {
         <li>Glowing floor plates influence traction—watch the "Surface" label next to your score to know if you're cruising or dragging.</li>
         <li>Power pickups grant single-use tools like Glue Drop. Hold only one at a time and tap the action key or button beside your score to spend it.</li>
         <li>Rope spools are scarce but restock a grapple charge (you only hold three). Spend hooks wisely.</li>
+        ${modeLine}
         ${debtLine}
         <li>Neon rings (or the lack of one when cloaked) plus mini bars on the HUD show how long each modifier lasts.</li>
         <li>Moving gates and optional Minefield mode add constant motion to obstacles—watch your positioning.</li>
@@ -84,22 +135,48 @@ export class Overlay {
     document.body.appendChild(this.instructionToggle);
   }
 
-  update(scores: ScoreState[]): void {
+  update(scores: ScoreState[], context?: OverlayUpdateContext): void {
+    if (this.timerLabel && context?.timerRemainingMs !== undefined) {
+      this.timerLabel.textContent = this.formatTimer(context.timerRemainingMs);
+    }
+
     this.scoreboard.innerHTML = '';
     scores.forEach((score) => {
       const row = document.createElement('div');
       row.className = 'scoreboard__row';
 
+      const header = document.createElement('div');
+      header.className = 'scoreboard__header';
+
       const label = document.createElement('span');
       label.className = 'scoreboard__label';
       label.style.color = score.color;
       label.textContent = score.label;
-      row.appendChild(label);
+      header.appendChild(label);
+
+      if (score.role) {
+        const role = document.createElement('span');
+        role.className = 'scoreboard__role';
+        if (score.roleColor) {
+          role.style.setProperty('--role-color', score.roleColor);
+        }
+        role.textContent = score.role;
+        header.appendChild(role);
+      }
+
+      row.appendChild(header);
 
       const value = document.createElement('span');
       value.className = 'scoreboard__value';
       value.textContent = `${score.value}/${score.goal}`;
       row.appendChild(value);
+
+      if (score.objective) {
+        const objective = document.createElement('div');
+        objective.className = 'scoreboard__objective';
+        objective.textContent = score.objective;
+        row.appendChild(objective);
+      }
 
       const meta = document.createElement('div');
       meta.className = 'scoreboard__meta';
@@ -179,7 +256,15 @@ export class Overlay {
     this.instructionPanel.classList.toggle('instruction-panel--visible', !expanded);
   }
 
+  private formatTimer(ms: number): string {
+    const clamped = Math.max(0, ms);
+    const minutes = Math.floor(clamped / 60000);
+    const seconds = Math.floor((clamped % 60000) / 1000);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+
   destroy(): void {
+    this.modeSummary.remove();
     this.scoreboard.remove();
     this.instructionPanel.remove();
     this.instructionToggle.remove();
