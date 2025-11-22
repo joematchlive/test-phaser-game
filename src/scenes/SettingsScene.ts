@@ -160,7 +160,6 @@ export class SettingsScene extends Phaser.Scene {
 
     tabButtons[0].setStyle({ backgroundColor: 'rgba(255,255,255,0.12)', color: '#fffffe' });
 
-    let activeStepObjects: Phaser.GameObjects.GameObject[] = [];
     let stepContainer: Phaser.GameObjects.Container | undefined;
     let stepMask: Phaser.GameObjects.Rectangle | undefined;
     let scrollY = 0;
@@ -186,8 +185,13 @@ export class SettingsScene extends Phaser.Scene {
     };
 
     const renderSection = () => {
-      activeStepObjects.forEach((obj) => obj.destroy());
-      activeStepObjects = [];
+      if (stepContainer) {
+        stepContainer.removeAll(true);
+        stepContainer.destroy();
+      }
+
+      stepMask?.destroy();
+
       scrollY = 0;
       stepContainer = undefined;
       stepMask = undefined;
@@ -198,7 +202,6 @@ export class SettingsScene extends Phaser.Scene {
       stepMask = this.add.rectangle(this.scale.width / 2, viewportTop, 680, viewportHeight, 0x000000, 0);
       stepMask.setOrigin(0.5, 0);
       stepContainer.setMask(stepMask.createGeometryMask());
-      activeStepObjects.push(stepContainer, stepMask);
 
       section.steppers.forEach((stepper, index) => {
         const y = viewportTop + index * itemSpacing;
