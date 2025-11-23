@@ -19,6 +19,7 @@ type Player = {
   wins: number;
   dashKey: Phaser.Input.Keyboard.Key;
   hookKey: Phaser.Input.Keyboard.Key;
+  shootKey: Phaser.Input.Keyboard.Key;
   powerKey: Phaser.Input.Keyboard.Key;
   powerKeyLabel: string;
   role: PlayerRole;
@@ -68,6 +69,7 @@ type PlayerBindingDefinition = {
   movementKeys: [string, string, string, string];
   dashKey: string | number;
   hookKey: string | number;
+  shootKey: { code: string | number; label: string };
   powerKey: { code: string | number; label: string };
 };
 
@@ -81,6 +83,7 @@ const HOOK_PULL_STRENGTH = 140;
 const HOOK_PULL_DECAY = 0.7;
 const HOOK_BREAK_DISTANCE = 56;
 const SHOOTER_RECOIL_FACTOR = 0.82;
+const SHOOT_RECOIL_DAMPENING = 0.9;
 const HOOK_COOLDOWN = 1800;
 const MAX_HOOK_CHARGES = 3;
 const ROPE_PICKUP_LIMIT = 1;
@@ -291,6 +294,7 @@ export class ArenaScene extends Phaser.Scene {
       keys: this.createKeys(binding.movementKeys),
       dash: this.input.keyboard!.addKey(binding.dashKey),
       hook: this.input.keyboard!.addKey(binding.hookKey),
+      shoot: { key: this.input.keyboard!.addKey(binding.shootKey.code), label: binding.shootKey.label },
       power: {
         key: this.input.keyboard!.addKey(binding.powerKey.code),
         label: binding.powerKey.label
@@ -550,11 +554,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private getPlayerBindings(): PlayerBindingDefinition[] {
-    const registryBindings = this.registry.get('playerBindings') as PlayerBindingDefinition[] | undefined;
-    if (Array.isArray(registryBindings) && registryBindings.length > 0) {
-      return registryBindings;
-    }
-    return [
+    const defaultBindings: PlayerBindingDefinition[] = [
       {
         id: 'p1',
         label: 'Pilot One',
@@ -562,6 +562,7 @@ export class ArenaScene extends Phaser.Scene {
         movementKeys: ['W', 'S', 'A', 'D'],
         dashKey: Phaser.Input.Keyboard.KeyCodes.SHIFT,
         hookKey: Phaser.Input.Keyboard.KeyCodes.E,
+        shootKey: { code: Phaser.Input.Keyboard.KeyCodes.F, label: 'F' },
         powerKey: {
           code: Phaser.Input.Keyboard.KeyCodes.R,
           label: 'R'
@@ -574,12 +575,21 @@ export class ArenaScene extends Phaser.Scene {
         movementKeys: ['UP', 'DOWN', 'LEFT', 'RIGHT'],
         dashKey: Phaser.Input.Keyboard.KeyCodes.ENTER,
         hookKey: Phaser.Input.Keyboard.KeyCodes.P,
+        shootKey: { code: Phaser.Input.Keyboard.KeyCodes.L, label: 'L' },
         powerKey: {
           code: Phaser.Input.Keyboard.KeyCodes.O,
           label: 'O'
         }
       }
     ];
+    const registryBindings = this.registry.get('playerBindings') as PlayerBindingDefinition[] | undefined;
+    if (Array.isArray(registryBindings) && registryBindings.length > 0) {
+      return registryBindings.map((binding, index) => ({
+        ...binding,
+        shootKey: binding.shootKey ?? defaultBindings[index % defaultBindings.length].shootKey
+      }));
+    }
+    return defaultBindings;
   }
 
   update(): void {
@@ -677,17 +687,41 @@ export class ArenaScene extends Phaser.Scene {
       this.addDashBurst(player.shape.x, player.shape.y, player.color);
     }
 
-    if (Phaser.Input.Keyboard.JustDown(player.hookKey)) {
-      if (this.isShootingMode()) {
-        this.fireProjectile(player);
-      } else {
-        this.attemptHook(player);
-      }
+    if (!this.isShootingMode() && Phaser.Input.Keyboard.JustDown(player.hookKey)) {
+      this.attemptHook(player);
     }
+
+    this.updatePlayerShooting(player);
 
     if (Phaser.Input.Keyboard.JustDown(player.powerKey)) {
       this.consumePlayerPower(player);
     }
+  }
+
+  private updatePlayerShooting(player: Player): void {
+    if (!this.isShootingMode() || !this.projectiles || this.roundOver) {
+      return;
+    }
+
+    if (!player.shootKey.isDown) {
+      return;
+    }
+
+    const cooldownReady = (this.projectileCooldowns[player.id] ?? 0) <= this.time.now;
+    if (!cooldownReady) {
+      return;
+    }
+
+    const maxRange = this.getProjectileRange();
+    const targetInfo = this.findNearestTarget(player, maxRange);
+    if (!targetInfo) {
+      return;
+    }
+
+    player.facing = targetInfo.direction.clone();
+    this.fireProjectile(player, targetInfo.direction.clone());
+    const recoil = player.body.velocity.clone().scale(SHOOT_RECOIL_DAMPENING);
+    player.body.setVelocity(recoil.x, recoil.y);
   }
 
   private applyBoundaryBehavior(player: Player): void {
@@ -741,6 +775,7 @@ export class ArenaScene extends Phaser.Scene {
     keys: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key>;
     dash: Phaser.Input.Keyboard.Key;
     hook: Phaser.Input.Keyboard.Key;
+    shoot: { key: Phaser.Input.Keyboard.Key; label: string };
     wins: number;
     power: { key: Phaser.Input.Keyboard.Key; label: string };
     role: PlayerRole;
@@ -770,6 +805,7 @@ export class ArenaScene extends Phaser.Scene {
       controls: config.keys,
       dashKey: config.dash,
       hookKey: config.hook,
+      shootKey: config.shoot.key,
       powerKey: config.power.key,
       powerKeyLabel: config.power.label,
       role: config.role,
@@ -1158,7 +1194,46 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private fireProjectile(player: Player): void {
+  private getProjectileRange(): number {
+    return this.settings.projectileSpeed * (this.settings.projectileLifetimeMs / 1000);
+  }
+
+  private findNearestTarget(
+    player: Player,
+    maxRange: number
+  ): { target: Player; direction: Phaser.Math.Vector2 } | undefined {
+    let nearest: Player | undefined;
+    let nearestDistance = Number.MAX_SAFE_INTEGER;
+    this.players.forEach((candidate) => {
+      if (candidate.id === player.id) {
+        return;
+      }
+      const distance = Phaser.Math.Distance.Between(
+        player.shape.x,
+        player.shape.y,
+        candidate.shape.x,
+        candidate.shape.y
+      );
+      if (distance > maxRange || distance >= nearestDistance) {
+        return;
+      }
+      nearest = candidate;
+      nearestDistance = distance;
+    });
+
+    if (!nearest) {
+      return undefined;
+    }
+
+    const direction = new Phaser.Math.Vector2(nearest.shape.x - player.shape.x, nearest.shape.y - player.shape.y);
+    if (direction.lengthSq() === 0) {
+      return undefined;
+    }
+
+    return { target: nearest, direction: direction.normalize() };
+  }
+
+  private fireProjectile(player: Player, direction?: Phaser.Math.Vector2): void {
     if (!this.projectiles || !this.isShootingMode() || this.roundOver) {
       return;
     }
@@ -1166,14 +1241,18 @@ export class ArenaScene extends Phaser.Scene {
     if (nextReady > this.time.now) {
       return;
     }
-    const direction =
-      player.facing.lengthSq() > 0 ? player.facing.clone().normalize() : new Phaser.Math.Vector2(0, 1);
-    const spawn = new Phaser.Math.Vector2(player.shape.x, player.shape.y).add(direction.clone().scale(24));
+    const aimDirection =
+      direction && direction.lengthSq() > 0
+        ? direction.clone().normalize()
+        : player.facing.lengthSq() > 0
+        ? player.facing.clone().normalize()
+        : new Phaser.Math.Vector2(0, 1);
+    const spawn = new Phaser.Math.Vector2(player.shape.x, player.shape.y).add(aimDirection.clone().scale(24));
     const bolt = this.add.circle(spawn.x, spawn.y, PROJECTILE_RADIUS, player.color, 0.9);
     this.physics.add.existing(bolt);
     const body = bolt.body as Phaser.Physics.Arcade.Body;
     body.setCircle(PROJECTILE_RADIUS);
-    body.setVelocity(direction.x * this.settings.projectileSpeed, direction.y * this.settings.projectileSpeed);
+    body.setVelocity(aimDirection.x * this.settings.projectileSpeed, aimDirection.y * this.settings.projectileSpeed);
     body.setAllowGravity(false);
     bolt.setDepth(0.5);
     bolt.setData('ownerId', player.id);
