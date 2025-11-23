@@ -1241,11 +1241,15 @@ export class ArenaScene extends Phaser.Scene {
         : new Phaser.Math.Vector2(0, 1);
     const spawn = new Phaser.Math.Vector2(player.shape.x, player.shape.y).add(aimDirection.clone().scale(24));
     const bolt = this.add.circle(spawn.x, spawn.y, PROJECTILE_RADIUS, player.color, 0.9);
-    this.physics.add.existing(bolt);
+    this.physics.add.existing(bolt, false);
     const body = bolt.body as Phaser.Physics.Arcade.Body;
     body.setCircle(PROJECTILE_RADIUS);
     body.setVelocity(aimDirection.x * this.settings.projectileSpeed, aimDirection.y * this.settings.projectileSpeed);
     body.setAllowGravity(false);
+    body.setImmovable(false);
+    body.moves = true;
+    body.enable = true;
+    body.setVelocity(aimDirection.x * this.settings.projectileSpeed, aimDirection.y * this.settings.projectileSpeed);
     bolt.setDepth(0.5);
     bolt.setData('ownerId', player.id);
     this.projectiles.add(bolt);
