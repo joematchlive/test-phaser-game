@@ -99,6 +99,7 @@ const TELEPORT_MIN_DISTANCE = 140;
 const SKULL_PICKUP_LIMIT = 2;
 
 const SKULL_RESPAWN_DELAY = 11000;
+const HAZARD_DAMAGE = 1;
 
 const PROJECTILE_RADIUS = 6;
 const PROJECTILE_HIT_FLASH = 0xfff3cd;
@@ -430,23 +431,9 @@ export class ArenaScene extends Phaser.Scene {
         return;
       }
       orb.destroy();
-      if (this.isShootingMode()) {
-        this.damageShields(player, this.settings.projectileDamage, PROJECTILE_HIT_FLASH);
-        if (!this.roundOver) {
-          this.spawnHazards(1);
-        }
-        return;
-      }
-      if (this.isPursuitMode() && player.role !== 'collector') {
-        this.applyHazardPenalty(player);
-        if (!this.roundOver) {
-          this.spawnHazards(1);
-        }
-        return;
-      }
-      player.score -= 2;
-      this.applyHazardPenalty(player);
-      this.evaluateScore(player);
+      const scorePenalty =
+        !this.isShootingMode() && (!this.isPursuitMode() || player.role === 'collector') ? 2 : 0;
+      this.applyDamage(player, HAZARD_DAMAGE, { color: orb.fillColor, scorePenalty });
       if (!this.roundOver) {
         this.spawnHazards(1);
       }
@@ -796,10 +783,8 @@ export class ArenaScene extends Phaser.Scene {
         player.speedMultiplier += 0.1;
         break;
       case 'reserve-core':
-        if (this.isShootingMode()) {
-          player.health = Math.min(player.maxHealth, player.health + 1);
-          player.score = player.health;
-        } else {
+        this.healPlayer(player, 1);
+        if (!this.isShootingMode()) {
           player.score += 1;
         }
         break;
@@ -809,6 +794,13 @@ export class ArenaScene extends Phaser.Scene {
         break;
       default:
         break;
+    }
+  }
+
+  private healPlayer(player: Player, amount: number): void {
+    player.health = Phaser.Math.Clamp(player.health + amount, 0, player.maxHealth);
+    if (this.isShootingMode()) {
+      player.score = player.health;
     }
   }
 
@@ -1194,7 +1186,7 @@ export class ArenaScene extends Phaser.Scene {
       return;
     }
     projectile.destroy();
-    this.damageShields(target, this.settings.projectileDamage, PROJECTILE_HIT_FLASH);
+    this.applyDamage(target, this.settings.projectileDamage, { color: PROJECTILE_HIT_FLASH });
   }
 
   private findSpawnPosition(radius: number): Phaser.Math.Vector2 | undefined {
@@ -1332,6 +1324,8 @@ export class ArenaScene extends Phaser.Scene {
       label: player.label,
       value: this.isShootingMode() ? player.health : player.score,
       color: `#${player.color.toString(16).padStart(6, '0')}`,
+      health: player.health,
+      maxHealth: player.maxHealth,
       dashReady,
       dashPercent,
       goal,
@@ -1411,22 +1405,38 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private damageShields(player: Player, amount: number, color?: number): void {
-    if (!this.isShootingMode()) {
-      player.score -= amount;
-      this.evaluateScore(player);
+  private applyDamage(player: Player, amount: number, options?: { color?: number; scorePenalty?: number }): void {
+    if (this.roundOver) {
       return;
     }
+    const scorePenalty = options?.scorePenalty ?? 0;
     player.health = Math.max(0, player.health - amount);
-    player.score = player.health;
-    this.applyHazardPenalty(player);
-    this.addStatusPing(player.shape.x, player.shape.y, color ?? PROJECTILE_HIT_FLASH);
-    if (player.health <= 0) {
-      const opponent = this.players.find((p) => p.id !== player.id);
-      if (opponent) {
-        this.recordWin(opponent, 'score');
-      }
+    if (this.isShootingMode()) {
+      player.score = player.health;
+    } else if (scorePenalty !== 0) {
+      player.score -= scorePenalty;
     }
+    this.applyHazardPenalty(player);
+    if (options?.color !== undefined) {
+      this.addStatusPing(player.shape.x, player.shape.y, options.color);
+    }
+    if (player.health <= 0) {
+      this.handlePlayerEliminated(player);
+      return;
+    }
+    this.evaluateScore(player);
+  }
+
+  private handlePlayerEliminated(player: Player): void {
+    if (this.roundOver) {
+      return;
+    }
+    const opponent = this.players.find((p) => p.id !== player.id);
+    if (opponent) {
+      this.recordWin(opponent, 'score');
+      return;
+    }
+    this.recordWin(player, 'score');
   }
 
   private registerTag(chaser: Player, collector: Player): void {
@@ -1489,13 +1499,12 @@ export class ArenaScene extends Phaser.Scene {
       return;
     }
 
+    if (player.health <= 0) {
+      this.handlePlayerEliminated(player);
+      return;
+    }
+
     if (this.isShootingMode()) {
-      if (player.health <= 0) {
-        const opponent = this.players.find((p) => p.id !== player.id);
-        if (opponent) {
-          this.recordWin(opponent, 'score');
-        }
-      }
       return;
     }
 

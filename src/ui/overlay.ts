@@ -9,6 +9,8 @@ export type ScoreState = {
   label: string;
   value: number;
   color: string;
+  health: number;
+  maxHealth: number;
   dashReady: boolean;
   dashPercent: number;
   goal: number;
@@ -199,6 +201,30 @@ export class Overlay {
         meta.appendChild(currency);
       }
       row.appendChild(meta);
+
+      const health = document.createElement('div');
+      health.className = 'scoreboard__health';
+      const healthLabel = document.createElement('span');
+      healthLabel.className = 'scoreboard__health-label';
+      healthLabel.textContent = 'Health';
+      health.appendChild(healthLabel);
+
+      const healthMeter = document.createElement('div');
+      healthMeter.className = 'scoreboard__health-meter';
+      const healthFill = document.createElement('div');
+      healthFill.className = 'scoreboard__health-fill';
+      const healthPercent = score.maxHealth > 0 ? score.health / score.maxHealth : 0;
+      healthFill.style.width = `${Math.max(0, Math.min(1, healthPercent)) * 100}%`;
+      healthFill.style.backgroundColor = score.color;
+      healthMeter.appendChild(healthFill);
+      health.appendChild(healthMeter);
+
+      const healthValue = document.createElement('span');
+      healthValue.className = 'scoreboard__health-value';
+      healthValue.textContent = `${score.health}/${score.maxHealth}`;
+      health.appendChild(healthValue);
+
+      row.appendChild(health);
 
       const surface = document.createElement('span');
       surface.className = 'scoreboard__surface';
