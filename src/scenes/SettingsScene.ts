@@ -358,7 +358,7 @@ export class SettingsScene extends Phaser.Scene {
   }
 
   private cycleMode(direction: 1 | -1): void {
-    const modes: GameMode[] = ['classic', 'minefield', 'pursuit'];
+    const modes: GameMode[] = ['classic', 'minefield', 'pursuit', 'shooting'];
     const current = getActiveSettings().mode;
     const index = modes.indexOf(current);
     const next = modes[(index + direction + modes.length) % modes.length];
