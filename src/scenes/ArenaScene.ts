@@ -14,6 +14,8 @@ type Player = {
   body: Phaser.Physics.Arcade.Body;
   facing: Phaser.Math.Vector2;
   score: number;
+  health: number;
+  maxHealth: number;
   wins: number;
   dashKey: Phaser.Input.Keyboard.Key;
   hookKey: Phaser.Input.Keyboard.Key;
@@ -33,6 +35,7 @@ type Player = {
   activeEffect?: PlayerEffect;
   hookCharges: number;
   maxHookCharges: number;
+  projectileCooldownUntil?: number;
   carriedPower?: PlayerPowerType;
   currentSurfaceId?: string;
   currentSurfaceLabel?: string;
@@ -87,6 +90,9 @@ const SKULL_PICKUP_LIMIT = 2;
 
 const SKULL_RESPAWN_DELAY = 11000;
 
+const PROJECTILE_RADIUS = 6;
+const PROJECTILE_HIT_FLASH = 0xfff3cd;
+
 const POWER_DEFINITIONS: Record<PlayerPowerType, PowerDefinition> = {
   glue: {
     id: 'glue',
@@ -106,6 +112,7 @@ export class ArenaScene extends Phaser.Scene {
   private powerPickups?: Phaser.Physics.Arcade.Group;
   private teleportPickups?: Phaser.Physics.Arcade.Group;
   private skullPickups?: Phaser.Physics.Arcade.Group;
+  private projectiles?: Phaser.Physics.Arcade.Group;
   private obstacles?: Phaser.Physics.Arcade.StaticGroup;
   private movingObstacles?: Phaser.Physics.Arcade.Group;
   private lastDash: Record<string, number> = {};
@@ -128,6 +135,7 @@ export class ArenaScene extends Phaser.Scene {
   private modeTimerExpiresAt?: number;
   private lastRoundEarnings: Record<string, number> = {};
   private upgradeModal?: UpgradeModal;
+  private projectileCooldowns: Record<string, number> = {};
 
   constructor() {
     super('Arena');
@@ -161,6 +169,7 @@ export class ArenaScene extends Phaser.Scene {
     this.destroyGroup(this.movingObstacles);
     this.destroyGroup(this.teleportPickups);
     this.destroyGroup(this.skullPickups);
+    this.destroyGroup(this.projectiles);
     this.energy = undefined;
     this.rareEnergy = undefined;
     this.hazards = undefined;
@@ -171,15 +180,18 @@ export class ArenaScene extends Phaser.Scene {
     this.powerPickups = undefined;
     this.teleportPickups = undefined;
     this.skullPickups = undefined;
+    this.projectiles = undefined;
+    this.projectileCooldowns = {};
     this.surfaceZones.forEach((zone) => zone.shape.destroy());
     this.surfaceZones = [];
 
     this.createBackground();
     const modeMeta = getModeMetadata(this.settings.mode);
     const pursuitMode = this.isPursuitMode();
+    const shootingMode = this.isShootingMode();
     this.overlay = new Overlay({
-      targetScore: this.settings.winningScore,
-      negativeLossThreshold: this.settings.negativeLossThreshold,
+      targetScore: shootingMode ? this.settings.shootingHealth : this.settings.winningScore,
+      negativeLossThreshold: shootingMode ? undefined : this.settings.negativeLossThreshold,
       modeLabel: modeMeta.label,
       modeDescription: modeMeta.description,
       timerSeconds: pursuitMode ? this.settings.modeTimerSeconds : undefined,
@@ -196,6 +208,21 @@ export class ArenaScene extends Phaser.Scene {
               label: 'Chaser',
               detail: `Tag the collector ${this.settings.chaserTagGoal} times before time runs out.`,
               color: '#ff5470'
+            }
+          ]
+        : shootingMode
+        ? [
+            {
+              id: 'shields',
+              label: 'Shields',
+              detail: `Each pilot spawns with ${this.settings.shootingHealth} shield points—lose them all and you explode.`,
+              color: '#2cb67d'
+            },
+            {
+              id: 'blaster',
+              label: 'Blaster volley',
+              detail: 'Aim your grapples to fire plasma bolts that chip rival shields.',
+              color: '#ff8906'
             }
           ]
         : undefined
@@ -282,7 +309,7 @@ export class ArenaScene extends Phaser.Scene {
       }
       const role: PlayerRole = pursuitMode && config.id === chaserId ? 'chaser' : 'collector';
       const roleSpeedMultiplier = pursuitMode ? (role === 'chaser' ? 1.12 : 0.96) : 1;
-      const maxHookCharges = role === 'chaser' ? MAX_HOOK_CHARGES + 1 : MAX_HOOK_CHARGES;
+      const maxHookCharges = shootingMode ? 0 : role === 'chaser' ? MAX_HOOK_CHARGES + 1 : MAX_HOOK_CHARGES;
       this.players.push(
         this.createPlayer({
           ...config,
@@ -291,7 +318,8 @@ export class ArenaScene extends Phaser.Scene {
           wins: this.matchWins[config.id],
           role,
           roleSpeedMultiplier,
-          maxHookCharges
+          maxHookCharges,
+          maxHealth: this.settings.shootingHealth
         })
       );
     });
@@ -312,15 +340,18 @@ export class ArenaScene extends Phaser.Scene {
     this.powerPickups = this.physics.add.group();
     this.teleportPickups = this.physics.add.group();
     this.skullPickups = this.physics.add.group();
+    this.projectiles = this.isShootingMode() ? this.physics.add.group() : undefined;
 
-    this.spawnEnergyOrbs(this.settings.energyCount);
-    this.spawnRareEnergy(this.settings.rareEnergyCount);
+    if (!shootingMode) {
+      this.spawnEnergyOrbs(this.settings.energyCount);
+      this.spawnRareEnergy(this.settings.rareEnergyCount);
+      this.spawnBehaviorPickups(this.settings.behaviorPickupCount);
+      this.spawnRopePickups(ROPE_PICKUP_LIMIT);
+      this.spawnPowerPickups(POWER_PICKUP_LIMIT);
+      this.spawnTeleportPickups(TELEPORT_PICKUP_LIMIT);
+      this.spawnSkullPickups(SKULL_PICKUP_LIMIT);
+    }
     this.spawnHazards();
-    this.spawnBehaviorPickups(this.settings.behaviorPickupCount);
-    this.spawnRopePickups(ROPE_PICKUP_LIMIT);
-    this.spawnPowerPickups(POWER_PICKUP_LIMIT);
-    this.spawnTeleportPickups(TELEPORT_PICKUP_LIMIT);
-    this.spawnSkullPickups(SKULL_PICKUP_LIMIT);
 
     const playerShapes = this.players.map((p) => p.shape);
     if (this.obstacles) {
@@ -344,6 +375,19 @@ export class ArenaScene extends Phaser.Scene {
       this
     );
 
+    if (shootingMode && this.projectiles) {
+      if (this.obstacles) {
+        this.physics.add.collider(this.projectiles, this.obstacles, (projectile) =>
+          (projectile as Phaser.GameObjects.GameObject).destroy()
+        );
+      }
+      if (this.movingObstacles) {
+        this.physics.add.collider(this.projectiles, this.movingObstacles, (projectile) =>
+          (projectile as Phaser.GameObjects.GameObject).destroy()
+        );
+      }
+    }
+
     this.physics.add.overlap(playerShapes, this.energy, (_playerShape, energy) => {
       const player = this.players.find((p) => p.shape === _playerShape);
       const orb = energy as Phaser.GameObjects.Arc;
@@ -352,6 +396,10 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       if (this.isPursuitMode() && player.role !== 'collector') {
+        return;
+      }
+
+      if (this.isShootingMode()) {
         return;
       }
 
@@ -368,6 +416,7 @@ export class ArenaScene extends Phaser.Scene {
       const orb = energy as Phaser.GameObjects.Arc;
       if (!player || !orb.active) return;
       if (this.isPursuitMode() && player.role !== 'collector') return;
+      if (this.isShootingMode()) return;
       orb.destroy();
       player.score += 3;
       this.evaluateScore(player);
@@ -384,6 +433,13 @@ export class ArenaScene extends Phaser.Scene {
         return;
       }
       orb.destroy();
+      if (this.isShootingMode()) {
+        this.damageShields(player, this.settings.projectileDamage, PROJECTILE_HIT_FLASH);
+        if (!this.roundOver) {
+          this.spawnHazards(1);
+        }
+        return;
+      }
       if (this.isPursuitMode() && player.role !== 'collector') {
         this.applyHazardPenalty(player);
         if (!this.roundOver) {
@@ -398,6 +454,19 @@ export class ArenaScene extends Phaser.Scene {
         this.spawnHazards(1);
       }
     });
+
+    if (shootingMode && this.projectiles) {
+      this.physics.add.overlap(playerShapes, this.projectiles, (_playerShape, projectile) => {
+        const player = this.players.find((p) => p.shape === _playerShape);
+        const bolt = projectile as Phaser.GameObjects.GameObject;
+        if (!player || !bolt.active) return;
+        const ownerId = bolt.getData('ownerId') as string | undefined;
+        if (ownerId && ownerId === player.id) {
+          return;
+        }
+        this.handleProjectileImpact(player, bolt);
+      });
+    }
 
     this.physics.add.overlap(playerShapes, this.behaviorPickups, (_playerShape, pickup) => {
       const player = this.players.find((p) => p.shape === _playerShape);
@@ -579,7 +648,11 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     if (Phaser.Input.Keyboard.JustDown(player.hookKey)) {
-      this.attemptHook(player);
+      if (this.isShootingMode()) {
+        this.fireProjectile(player);
+      } else {
+        this.attemptHook(player);
+      }
     }
 
     if (Phaser.Input.Keyboard.JustDown(player.powerKey)) {
@@ -643,6 +716,7 @@ export class ArenaScene extends Phaser.Scene {
     role: PlayerRole;
     roleSpeedMultiplier: number;
     maxHookCharges: number;
+    maxHealth: number;
   }): Player {
     const radius = 18;
     const shape = this.add.circle(config.x, config.y, radius, config.color, 0.9);
@@ -659,7 +733,9 @@ export class ArenaScene extends Phaser.Scene {
       shape,
       body,
       facing: new Phaser.Math.Vector2(0, 1),
-      score: 0,
+      score: this.isShootingMode() ? config.maxHealth : 0,
+      health: config.maxHealth,
+      maxHealth: config.maxHealth,
       wins: config.wins,
       controls: config.keys,
       dashKey: config.dash,
@@ -690,7 +766,12 @@ export class ArenaScene extends Phaser.Scene {
         player.speedMultiplier += 0.1;
         break;
       case 'reserve-core':
-        player.score += 1;
+        if (this.isShootingMode()) {
+          player.health = Math.min(player.maxHealth, player.health + 1);
+          player.score = player.health;
+        } else {
+          player.score += 1;
+        }
         break;
       case 'hook-stock':
         player.maxHookCharges += 1;
@@ -1047,11 +1128,43 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  private fireProjectile(player: Player): void {
+    if (!this.projectiles || !this.isShootingMode() || this.roundOver) {
+      return;
+    }
+    const nextReady = this.projectileCooldowns[player.id] ?? 0;
+    if (nextReady > this.time.now) {
+      return;
+    }
+    const direction =
+      player.facing.lengthSq() > 0 ? player.facing.clone().normalize() : new Phaser.Math.Vector2(0, 1);
+    const spawn = new Phaser.Math.Vector2(player.shape.x, player.shape.y).add(direction.clone().scale(24));
+    const bolt = this.add.circle(spawn.x, spawn.y, PROJECTILE_RADIUS, player.color, 0.9);
+    this.physics.add.existing(bolt);
+    const body = bolt.body as Phaser.Physics.Arcade.Body;
+    body.setCircle(PROJECTILE_RADIUS);
+    body.setVelocity(direction.x * this.settings.projectileSpeed, direction.y * this.settings.projectileSpeed);
+    body.setAllowGravity(false);
+    bolt.setDepth(0.5);
+    bolt.setData('ownerId', player.id);
+    this.projectiles.add(bolt);
+    this.projectileCooldowns[player.id] = this.time.now + this.settings.projectileCooldownMs;
+    this.time.delayedCall(this.settings.projectileLifetimeMs, () => bolt.destroy());
+  }
+
   private releaseHook(playerId: string): void {
     const hook = this.activeHooks[playerId];
     if (!hook) return;
     hook.tether.destroy();
     this.activeHooks[playerId] = undefined;
+  }
+
+  private handleProjectileImpact(target: Player, projectile: Phaser.GameObjects.GameObject): void {
+    if (!projectile.active) {
+      return;
+    }
+    projectile.destroy();
+    this.damageShields(target, this.settings.projectileDamage, PROJECTILE_HIT_FLASH);
   }
 
   private findSpawnPosition(radius: number): Phaser.Math.Vector2 | undefined {
@@ -1155,8 +1268,9 @@ export class ArenaScene extends Phaser.Scene {
     const dashPercent = dashReady ? 1 : 1 - remaining / DASH_COOLDOWN;
     const currency = getCurrency(player.id);
 
+    const shootingGoal = this.isShootingMode() ? player.maxHealth : undefined;
     const pursuitGoal = this.isPursuitMode() && player.role === 'chaser' ? this.settings.chaserTagGoal : undefined;
-    const goal = pursuitGoal ?? this.settings.winningScore;
+    const goal = shootingGoal ?? pursuitGoal ?? this.settings.winningScore;
     const timerNote = this.isPursuitMode() && this.settings.modeTimerSeconds > 0
       ? ` before ${Math.ceil(this.settings.modeTimerSeconds / 60)}m is up`
       : '';
@@ -1164,8 +1278,10 @@ export class ArenaScene extends Phaser.Scene {
       ? player.role === 'chaser'
         ? `Tag the collector ${goal} times${timerNote}.`
         : `Collect energy to ${goal} and avoid tags${timerNote}.`
+      : this.isShootingMode()
+      ? 'Land plasma hits to strip rival shields. First to zero shields loses.'
       : undefined;
-    const roleColor = player.role === 'chaser' ? '#ff5470' : '#2cb67d';
+    const roleColor = this.isPursuitMode() ? (player.role === 'chaser' ? '#ff5470' : '#2cb67d') : '#ffd803';
 
     const effects = player.activeEffect
       ? [
@@ -1184,7 +1300,7 @@ export class ArenaScene extends Phaser.Scene {
     return {
       id: player.id,
       label: player.label,
-      value: player.score,
+      value: this.isShootingMode() ? player.health : player.score,
       color: `#${player.color.toString(16).padStart(6, '0')}`,
       dashReady,
       dashPercent,
@@ -1194,8 +1310,8 @@ export class ArenaScene extends Phaser.Scene {
       hookCharges: player.hookCharges,
       maxHookCharges: player.maxHookCharges,
       surfaceLabel: player.currentSurfaceLabel,
-      role: this.isPursuitMode() ? (player.role === 'chaser' ? 'Chaser' : 'Collector') : undefined,
-      roleColor: this.isPursuitMode() ? roleColor : undefined,
+      role: this.isPursuitMode() ? (player.role === 'chaser' ? 'Chaser' : 'Collector') : shootingGoal ? 'Duelist' : undefined,
+      roleColor: this.isPursuitMode() ? roleColor : shootingGoal ? roleColor : undefined,
       objective,
       currency: {
         balance: currency.balance,
@@ -1265,6 +1381,24 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  private damageShields(player: Player, amount: number, color?: number): void {
+    if (!this.isShootingMode()) {
+      player.score -= amount;
+      this.evaluateScore(player);
+      return;
+    }
+    player.health = Math.max(0, player.health - amount);
+    player.score = player.health;
+    this.applyHazardPenalty(player);
+    this.addStatusPing(player.shape.x, player.shape.y, color ?? PROJECTILE_HIT_FLASH);
+    if (player.health <= 0) {
+      const opponent = this.players.find((p) => p.id !== player.id);
+      if (opponent) {
+        this.recordWin(opponent, 'score');
+      }
+    }
+  }
+
   private registerTag(chaser: Player, collector: Player): void {
     if (this.roundOver) {
       return;
@@ -1296,6 +1430,10 @@ export class ArenaScene extends Phaser.Scene {
     return this.settings.mode === 'pursuit';
   }
 
+  private isShootingMode(): boolean {
+    return this.settings.mode === 'shooting';
+  }
+
   private getTimerRemaining(): number | undefined {
     if (!this.modeTimerExpiresAt) {
       return undefined;
@@ -1318,6 +1456,16 @@ export class ArenaScene extends Phaser.Scene {
 
   private evaluateScore(player: Player): void {
     if (this.roundOver) {
+      return;
+    }
+
+    if (this.isShootingMode()) {
+      if (player.health <= 0) {
+        const opponent = this.players.find((p) => p.id !== player.id);
+        if (opponent) {
+          this.recordWin(opponent, 'score');
+        }
+      }
       return;
     }
 

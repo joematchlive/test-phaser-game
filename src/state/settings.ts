@@ -20,7 +20,7 @@ export type LevelSchema = {
   surfaces?: SurfaceSchema[];
 };
 
-export type GameMode = 'classic' | 'minefield' | 'pursuit';
+export type GameMode = 'classic' | 'minefield' | 'pursuit' | 'shooting';
 
 type ModeMetadata = {
   label: string;
@@ -40,6 +40,11 @@ export type GameSettings = {
   chaserTagGoal: number;
   modeTimerSeconds: number;
   boundaryBehavior: 'collide' | 'wrap';
+  shootingHealth: number;
+  projectileDamage: number;
+  projectileSpeed: number;
+  projectileCooldownMs: number;
+  projectileLifetimeMs: number;
 };
 
 const parsedLevels: LevelSchema[] = Array.isArray(levels) ? (levels as LevelSchema[]) : [];
@@ -57,7 +62,12 @@ const defaultSettings: GameSettings = {
   negativeLossThreshold: -3,
   chaserTagGoal: 3,
   modeTimerSeconds: 0,
-  boundaryBehavior: 'collide'
+  boundaryBehavior: 'collide',
+  shootingHealth: 5,
+  projectileDamage: 1,
+  projectileSpeed: 520,
+  projectileCooldownMs: 700,
+  projectileLifetimeMs: 2200
 };
 
 const modeMetadata: Record<GameMode, ModeMetadata> = {
@@ -105,6 +115,26 @@ const modeMetadata: Record<GameMode, ModeMetadata> = {
       negativeLossThreshold: -4,
       modeTimerSeconds: 120,
       boundaryBehavior: 'collide'
+    }
+  },
+  shooting: {
+    label: 'Shooting Skirmish',
+    description: 'Dash, strafe, and fire plasma bolts to deplete rival shields before yours hit zero.',
+    defaults: {
+      winningScore: 0,
+      negativeLossThreshold: -3,
+      hazardCount: 1,
+      energyCount: 0,
+      rareEnergyCount: 0,
+      behaviorPickupCount: 0,
+      chaserTagGoal: 0,
+      modeTimerSeconds: 0,
+      boundaryBehavior: 'collide',
+      shootingHealth: 6,
+      projectileDamage: 1,
+      projectileSpeed: 560,
+      projectileCooldownMs: 650,
+      projectileLifetimeMs: 1800
     }
   }
 };
