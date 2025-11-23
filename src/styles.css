@@ -164,6 +164,40 @@ canvas {
   color: #fffffe;
 }
 
+.scoreboard__health {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.scoreboard__health-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.scoreboard__health-meter {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.scoreboard__health-fill {
+  height: 100%;
+  transition: width 0.15s ease;
+}
+
+.scoreboard__health-value {
+  font-variant-numeric: tabular-nums;
+  color: #fffffe;
+}
+
 .scoreboard__surface {
   grid-column: 1 / -1;
   font-size: 12px;
