@@ -1244,11 +1244,13 @@ export class ArenaScene extends Phaser.Scene {
     this.physics.add.existing(bolt, false);
     const body = bolt.body as Phaser.Physics.Arcade.Body;
     body.setCircle(PROJECTILE_RADIUS);
-    body.setVelocity(aimDirection.x * this.settings.projectileSpeed, aimDirection.y * this.settings.projectileSpeed);
+    body.enable = true;
     body.setAllowGravity(false);
+    body.setCollideWorldBounds(false);
+    body.setDamping(false);
+    body.setDrag(0, 0);
     body.setImmovable(false);
     body.moves = true;
-    body.enable = true;
     body.setVelocity(aimDirection.x * this.settings.projectileSpeed, aimDirection.y * this.settings.projectileSpeed);
     bolt.setDepth(0.5);
     bolt.setData('ownerId', player.id);
