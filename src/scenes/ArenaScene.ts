@@ -61,6 +61,16 @@ type PowerDefinition = {
   pickupColor: number;
 };
 
+type PlayerBindingDefinition = {
+  id: string;
+  label: string;
+  color: number;
+  movementKeys: [string, string, string, string];
+  dashKey: string | number;
+  hookKey: string | number;
+  powerKey: { code: string | number; label: string };
+};
+
 const PLAYER_SPEED = 260;
 const DASH_SPEED = 500;
 const DASH_COOLDOWN = 800;
@@ -273,32 +283,19 @@ export class ArenaScene extends Phaser.Scene {
           { x: this.scale.width * 0.75, y: this.scale.height * 0.7 }
         ];
 
-    const playerConfigs = [
-      {
-        id: 'p1',
-        label: 'Pilot One',
-        color: 0x7f5af0,
-        keys: this.createKeys(['W', 'S', 'A', 'D']),
-        dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
-        hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E),
-        power: {
-          key: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R),
-          label: 'R'
-        }
-      },
-      {
-        id: 'p2',
-        label: 'Pilot Two',
-        color: 0xff8906,
-        keys: this.createKeys(['UP', 'DOWN', 'LEFT', 'RIGHT']),
-        dash: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER),
-        hook: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P),
-        power: {
-          key: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.O),
-          label: 'O'
-        }
+    const playerBindings = this.getPlayerBindings();
+    const playerConfigs = playerBindings.map((binding) => ({
+      id: binding.id,
+      label: binding.label,
+      color: binding.color,
+      keys: this.createKeys(binding.movementKeys),
+      dash: this.input.keyboard!.addKey(binding.dashKey),
+      hook: this.input.keyboard!.addKey(binding.hookKey),
+      power: {
+        key: this.input.keyboard!.addKey(binding.powerKey.code),
+        label: binding.powerKey.label
       }
-    ];
+    }));
 
     const chaserId = pursuitMode ? this.chooseChaserId(playerConfigs.map((config) => config.id)) : undefined;
 
@@ -550,6 +547,39 @@ export class ArenaScene extends Phaser.Scene {
     if (pursuitMode) {
       this.startModeTimer();
     }
+  }
+
+  private getPlayerBindings(): PlayerBindingDefinition[] {
+    const registryBindings = this.registry.get('playerBindings') as PlayerBindingDefinition[] | undefined;
+    if (Array.isArray(registryBindings) && registryBindings.length > 0) {
+      return registryBindings;
+    }
+    return [
+      {
+        id: 'p1',
+        label: 'Pilot One',
+        color: 0x7f5af0,
+        movementKeys: ['W', 'S', 'A', 'D'],
+        dashKey: Phaser.Input.Keyboard.KeyCodes.SHIFT,
+        hookKey: Phaser.Input.Keyboard.KeyCodes.E,
+        powerKey: {
+          code: Phaser.Input.Keyboard.KeyCodes.R,
+          label: 'R'
+        }
+      },
+      {
+        id: 'p2',
+        label: 'Pilot Two',
+        color: 0xff8906,
+        movementKeys: ['UP', 'DOWN', 'LEFT', 'RIGHT'],
+        dashKey: Phaser.Input.Keyboard.KeyCodes.ENTER,
+        hookKey: Phaser.Input.Keyboard.KeyCodes.P,
+        powerKey: {
+          code: Phaser.Input.Keyboard.KeyCodes.O,
+          label: 'O'
+        }
+      }
+    ];
   }
 
   update(): void {
