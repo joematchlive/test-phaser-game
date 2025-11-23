@@ -342,7 +342,9 @@ export class ArenaScene extends Phaser.Scene {
     this.powerPickups = this.physics.add.group();
     this.teleportPickups = this.physics.add.group();
     this.skullPickups = this.physics.add.group();
-    this.projectiles = this.isShootingMode() ? this.physics.add.group() : undefined;
+    this.projectiles = this.isShootingMode()
+      ? this.physics.add.group({ allowGravity: false, immovable: false })
+      : undefined;
 
     if (!shootingMode) {
       this.spawnEnergyOrbs(this.settings.energyCount);
@@ -1240,21 +1242,34 @@ export class ArenaScene extends Phaser.Scene {
         ? player.facing.clone().normalize()
         : new Phaser.Math.Vector2(0, 1);
     const spawn = new Phaser.Math.Vector2(player.shape.x, player.shape.y).add(aimDirection.clone().scale(24));
-    const bolt = this.add.circle(spawn.x, spawn.y, PROJECTILE_RADIUS, player.color, 0.9);
-    this.physics.add.existing(bolt, false);
+    this.ensureProjectileTexture();
+    const bolt = this.physics.add.image(spawn.x, spawn.y, 'projectile-bolt');
+    bolt.setDepth(0.5);
+    bolt.setTint(player.color);
+    bolt.setData('ownerId', player.id);
     const body = bolt.body as Phaser.Physics.Arcade.Body;
     body.setCircle(PROJECTILE_RADIUS);
-    body.setVelocity(aimDirection.x * this.settings.projectileSpeed, aimDirection.y * this.settings.projectileSpeed);
     body.setAllowGravity(false);
+    body.setCollideWorldBounds(false);
+    body.setBounce(0);
     body.setImmovable(false);
-    body.moves = true;
-    body.enable = true;
     body.setVelocity(aimDirection.x * this.settings.projectileSpeed, aimDirection.y * this.settings.projectileSpeed);
-    bolt.setDepth(0.5);
-    bolt.setData('ownerId', player.id);
     this.projectiles.add(bolt);
     this.projectileCooldowns[player.id] = this.time.now + this.settings.projectileCooldownMs;
     this.time.delayedCall(this.settings.projectileLifetimeMs, () => bolt.destroy());
+  }
+
+  private ensureProjectileTexture(): void {
+    if (this.textures.exists('projectile-bolt')) {
+      return;
+    }
+
+    const diameter = PROJECTILE_RADIUS * 2;
+    const g = this.add.graphics();
+    g.fillStyle(0xffffff, 0.9);
+    g.fillCircle(PROJECTILE_RADIUS, PROJECTILE_RADIUS, PROJECTILE_RADIUS);
+    g.generateTexture('projectile-bolt', diameter, diameter);
+    g.destroy();
   }
 
   private releaseHook(playerId: string): void {
